@@ -1,0 +1,16 @@
+version: '3'
+
+dotenv: [ ".env" ]
+
+tasks:
+  run:
+    cmds:
+    - ./target/debug/rust_listener
+
+  coverage-html:
+    cmds:
+    - cargo +nightly llvm-cov --html --open
+
+  coverage-lcov:
+    cmds:
+    - cargo +nightly llvm-cov --mcdc --lcov --output-path lcov.info

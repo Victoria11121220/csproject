@@ -1,0 +1,23 @@
+# permissions for end users to view iotlistenerrequests.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: listener-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: iotlistenerrequest-viewer-role
+rules:
+- apiGroups:
+  - iot.visualiseinfo.com
+  resources:
+  - iotlistenerrequests
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - iot.visualiseinfo.com
+  resources:
+  - iotlistenerrequests/status
+  verbs:
+  - get
