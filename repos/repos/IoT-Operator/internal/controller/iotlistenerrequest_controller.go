@@ -112,6 +112,12 @@ type IoTListenerRequestReconciler struct {
 //+kubebuilder:rbac:groups=iot.visualiseinfo.com,resources=iotlistenerrequests/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=iot.visualiseinfo.com,resources=iotlistenerrequests/finalizers,verbs=update
 
+//+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;update;patch;delete
+
+// 如果你的 Operator 还需要创建 Service 或 Deployment，也需要相应的权限
+//+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 //
