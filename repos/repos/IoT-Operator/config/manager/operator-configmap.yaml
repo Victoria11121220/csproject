@@ -1,0 +1,31 @@
+# config/manager/operator-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: listener-operator-config
+  namespace: system # 必须和 Deployment 的 namespace 一致
+data:
+  # 键名 (key) 将成为文件名
+  # 值 (value) 将成为文件内容
+
+  # 对应 ./etc/config/LISTENER_IMAGE
+  LISTENER_IMAGE: "iot-listener:dev"
+
+  # 对应 ./etc/config/LISTENER_IMAGE_PULL_POLICY
+  # 可选值: Always, Never, IfNotPresent
+  LISTENER_IMAGE_PULL_POLICY: "IfNotPresent"
+
+  # 对应 ./etc/config/LISTENER_IMAGE_PULL_SECRET
+  # 这里填写你的镜像拉取凭证的 Secret 名字，如果没有，留空
+  LISTENER_IMAGE_PULL_SECRET: ""
+
+  # 对应 ./etc/config/RELEASE_NAME
+  RELEASE_NAME: "iot-listener"
+
+  # 对应 ./etc/config/HOST_ALIASES
+  # 这是一个 JSON 字符串，如果没有可以留空或填 "[]"
+  HOST_ALIASES: "[]"
+
+  # 对应 ./etc/config/LISTENER_POD_ANNOTATIONS
+  # 这是一个 JSON 字符串，如果没有可以留空或填 "{}"
+  LISTENER_POD_ANNOTATIONS: "{}"

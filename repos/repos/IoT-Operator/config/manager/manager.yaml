@@ -28,35 +28,23 @@ spec:
       labels:
         control-plane: controller-manager
     spec:
-      # TODO(user): Uncomment the following code to configure the nodeAffinity expression
-      # according to the platforms which are supported by your solution.
-      # It is considered best practice to support multiple architectures. You can
-      # build your manager image using the makefile target docker-buildx.
-      # affinity:
-      #   nodeAffinity:
-      #     requiredDuringSchedulingIgnoredDuringExecution:
-      #       nodeSelectorTerms:
-      #         - matchExpressions:
-      #           - key: kubernetes.io/arch
-      #             operator: In
-      #             values:
-      #               - amd64
-      #               - arm64
-      #               - ppc64le
-      #               - s390x
-      #           - key: kubernetes.io/os
-      #             operator: In
-      #             values:
-      #               - linux
+      # Pod 级别的安全上下文
       securityContext:
         runAsNonRoot: true
-        # TODO(user): For common cases that do not require escalating privileges
-        # it is recommended to ensure that all your Pods/Containers are restrictive.
-        # More info: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
-        # Please uncomment the following code if your project does NOT have to work on old Kubernetes
-        # versions < 1.19 or on vendors versions which do NOT support this field by default (i.e. Openshift < 4.11 ).
+        fsGroup: 65534
         # seccompProfile:
         #   type: RuntimeDefault
+      
+      # 定义 Pod 可以使用的卷 (Volumes)
+      volumes:
+      - name: config-volume
+        configMap:
+          name: listener-operator-config # 对应我们创建的 ConfigMap
+      - name: secret-volume
+        secret:
+          secretName: listener-operator-secrets # 对应我们创建的 Secret
+          
+      # 容器列表
       containers:
       - command:
         - /manager
@@ -64,11 +52,22 @@ spec:
         - --leader-elect
         image: controller:latest
         name: manager
+        
+        # 将上面定义的卷挂载到容器内部
+        volumeMounts:
+        - name: config-volume
+          mountPath: /etc/config # 挂载配置
+        - name: secret-volume
+          mountPath: /etc/secrets # 挂载密钥
+          
+        # 容器级别的安全上下文
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
             drop:
             - "ALL"
+            
+        # 健康检查探针
         livenessProbe:
           httpGet:
             path: /healthz
@@ -81,8 +80,8 @@ spec:
             port: 8081
           initialDelaySeconds: 5
           periodSeconds: 10
-        # TODO(user): Configure the resources accordingly based on the project requirements.
-        # More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+          
+        # 资源请求和限制
         resources:
           limits:
             cpu: 500m
@@ -90,5 +89,7 @@ spec:
           requests:
             cpu: 10m
             memory: 64Mi
+            
+      # Pod 使用的服务账户
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10
