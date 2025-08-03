@@ -5,6 +5,7 @@ use super::node::Node;
 use super::concrete_node::ConcreteNode;
 use super::RwLockGraph;
 use petgraph::graph::DiGraph;
+use tracing::info;
 use std::collections::{ HashMap, HashSet };
 use std::env;
 use tokio::sync::RwLock;
@@ -131,9 +132,12 @@ fn from_flow(nodes_str: &str, edges_str: &str) -> Result<RwLockGraph, Box<dyn st
 pub fn read_graph() -> Result<(i32, RwLockGraph), Box<dyn std::error::Error>> {
 	// Log all environment variables
 	let nodes: String = env::var("nodes").expect("`nodes` must be set");
+	info!("node: {}", nodes);
 	let edges: String = env::var("edges").expect("`edges` must be set");
+	info!("edges: {}", edges);
 	let flow_id: String = env::var("flow_id").expect("`flow_id` must be set");
 	let flow_id = flow_id.trim().parse::<i32>()?;
+	info!("flow_id: {}", flow_id);
 	let graph = from_flow(&nodes, &edges)?;
 
 	Ok((flow_id, graph))
