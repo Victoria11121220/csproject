@@ -77,7 +77,7 @@ func (r *IoTListenerRequestReconciler) createPod(cr iotv1alpha1.IoTListenerReque
 							Value: "0.0.0.0",
 						},
 					},
-					ImagePullPolicy: r.PullPolicy,
+					ImagePullPolicy: corev1.PullIfNotPresent,
 					Ports: []corev1.ContainerPort{
 						{
 							ContainerPort: 8000,
