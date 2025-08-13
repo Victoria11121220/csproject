@@ -1,0 +1,2 @@
+-- No initial data found in .env file.
+-- This file is intentionally left empty.
