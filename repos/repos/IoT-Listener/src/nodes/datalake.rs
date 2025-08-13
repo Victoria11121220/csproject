@@ -116,20 +116,14 @@ impl ConcreteNode for DatalakeNode {
 							.collect()
 					)
 				),
-			// If only one reading available, return a single value to the flow
-			1 =>
-				Ok(
-					GraphPayload::Objects(
-						vec![(self.default_output_handle(), values[0].clone())]
-							.into_iter()
-							.collect()
-					)
-				),
-			// If multiple readings available, return a collection of values to the flow
+			// If one or more readings are available, return the latest value to the flow.
+			// This ensures the output is always a single object, preventing type mismatches downstream.
 			_ =>
 				Ok(
-					GraphPayload::Collections(
-						vec![(self.default_output_handle(), values)].into_iter().collect()
+					GraphPayload::Objects(
+						vec![(self.default_output_handle(), values.last().unwrap().clone())]
+							.into_iter()
+							.collect()
 					)
 				),
 		}
@@ -224,7 +218,7 @@ mod tests {
 			sensor_id: 1,
 			value: Some(10.0),
 			raw_value: "10.0".to_string(),
-			timestamp: chrono::Utc::now().naive_utc(),
+			timestamp: chrono::Utc::now()
 		};
 		let sensor = entities::sensor::Model {
 			id: 1,
@@ -249,7 +243,7 @@ mod tests {
 			sensor_id: 1,
 			value: None,
 			raw_value: "true".to_string(),
-			timestamp: chrono::Utc::now().naive_utc(),
+			timestamp: chrono::Utc::now()
 		};
 
 		let sensor = entities::sensor::Model {
@@ -275,7 +269,7 @@ mod tests {
 			sensor_id: 1,
 			value: None,
 			raw_value: "test".to_string(),
-			timestamp: chrono::Utc::now().naive_utc(),
+			timestamp: chrono::Utc::now()
 		};
 		let sensor = entities::sensor::Model {
 			id: 1,

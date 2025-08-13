@@ -1,6 +1,7 @@
 pub mod http;
 pub mod mas_monitor;
 pub mod mqtt;
+pub mod kafka;
 
 use crate::sources::traits::async_trait::AsyncSource;
 use crate::{
@@ -19,6 +20,7 @@ pub enum SourceConfig {
     Http(http::HTTPSourceConfig),
     Mqtt(mqtt::MQTTSourceConfig),
     MASMonitor(mas_monitor::MASMonitorSourceConfig),
+    Kafka(kafka::KafkaSourceConfig),
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +60,7 @@ impl<'de> Deserialize<'de> for SourceNode {
                 .map(SourceConfig::MASMonitor)
                 .map_err(de::Error::custom)?,
             Source::Mqtt(_) => serde_json::from_value(raw.config).map(SourceConfig::Mqtt).map_err(de::Error::custom)?,
+            Source::Kafka(_) => serde_json::from_value(raw.config).map(SourceConfig::Kafka).map_err(de::Error::custom)?,
         };
 
         Ok(SourceNode { source: raw.source, config })
@@ -142,6 +145,41 @@ impl ConcreteNode for SourceNode {
                         vec![
                             (self.default_output_handle(), values.iter().map(|v| v["payload"].clone()).collect()),
                             ("topic".to_string(), values.iter().map(|v| v["topic"].clone()).collect()),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    )),
+                }
+            }
+            Source::Kafka(_) => {
+                match data {
+                    /*
+                        {
+                            "payload": {
+                                "temperature": 25.0,
+                                "humidity": 50.0
+                            },
+                            "topic": "sensor-data",
+                            "partition": 0,
+                            "offset": 12345
+                        }
+                    */
+                    NodeData::Object(value) => Ok(GraphPayload::Objects(
+                        vec![
+                            (self.default_output_handle(), value["payload"].clone()),
+                            ("topic".to_string(), value["topic"].clone()),
+                            ("partition".to_string(), value["partition"].clone()),
+                            ("offset".to_string(), value["offset"].clone()),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    )),
+                    NodeData::Collection(values) => Ok(GraphPayload::Collections(
+                        vec![
+                            (self.default_output_handle(), values.iter().map(|v| v["payload"].clone()).collect()),
+                            ("topic".to_string(), values.iter().map(|v| v["topic"].clone()).collect()),
+                            ("partition".to_string(), values.iter().map(|v| v["partition"].clone()).collect()),
+                            ("offset".to_string(), values.iter().map(|v| v["offset"].clone()).collect()),
                         ]
                         .into_iter()
                         .collect(),
