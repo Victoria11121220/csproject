@@ -20,6 +20,7 @@ impl StoreReading for DebugReading {
             flow_id: Set(flow_id),
             debug_node_id: Set(self.node_id.clone()),
             message: Set(self.value.to_string()),
+            timestamp: Set(chrono::Utc::now().naive_utc()),
             ..Default::default()
         };
 

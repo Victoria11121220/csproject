@@ -1,9 +1,12 @@
 use super::StoreReading;
-use crate::{entities::{
-    self,
-    sea_orm_active_enums::{IotFieldType, IotUnit},
-}, metrics::READINGS_SAVED_TOTAL};
-use sea_orm::{sea_query::OnConflict, EntityTrait, Set, TransactionTrait};
+use crate::{
+    entities::{
+        self, reading,
+        sea_orm_active_enums::{IotFieldType, IotUnit},
+    },
+    metrics::READINGS_SAVED_TOTAL,
+};
+use sea_orm::{sea_query::OnConflict, DbErr, EntityTrait, Set, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
@@ -19,7 +22,6 @@ pub struct IoTReading {
 }
 
 impl IoTReading {
-
     fn cast_value(&self, value: &str) -> Option<f64> {
         match self.value_type {
             IotFieldType::Number => value.parse::<f64>().ok(),
@@ -73,13 +75,16 @@ impl StoreReading for IoTReading {
 
         let sensor = entities::prelude::Sensor::insert(sensor)
             .on_conflict(
-                OnConflict::columns(vec![entities::sensor::Column::Identifier, entities::sensor::Column::Measuring])
-                    .update_columns(vec![
-                        entities::sensor::Column::Unit,
-                        entities::sensor::Column::ValueType,
-                        entities::sensor::Column::FlowId,
-                    ])
-                    .to_owned(),
+                OnConflict::columns(vec![
+                    entities::sensor::Column::Identifier,
+                    entities::sensor::Column::Measuring,
+                ])
+                .update_columns(vec![
+                    entities::sensor::Column::Unit,
+                    entities::sensor::Column::ValueType,
+                    entities::sensor::Column::FlowId,
+                ])
+                .to_owned(),
             )
             .exec_with_returning(&txn)
             .await
@@ -89,10 +94,47 @@ impl StoreReading for IoTReading {
             sensor_id: Set(sensor.id),
             value: Set(self.cast_value(&self.value)),
             raw_value: Set(self.value.clone()),
-            timestamp: Set(self.timestamp.naive_utc()),
+            timestamp: Set(self.timestamp),
             ..Default::default()
         };
-        entities::prelude::Reading::insert(result).exec(&txn).await.map_err(|e| e.to_string())?;
+
+        let conflict_action =
+            OnConflict::columns([reading::Column::SensorId, reading::Column::Timestamp])
+                .update_columns([reading::Column::RawValue, reading::Column::Value]).to_owned();
+
+        let insert_query = entities::prelude::Reading::insert(result)
+            .on_conflict(
+                conflict_action, 
+            )
+            .exec(&txn)
+            .await;
+
+        match insert_query {
+            Ok(_) => {
+            }
+            Err(DbErr::RecordNotInserted) => {
+                error!("err: RecordNotInserted")
+            }
+            Err(e) => {
+                return Err(e.to_string());
+            }
+        }
+        // entities::prelude::Reading::insert(result)
+        //     .on_conflict(
+        //         // 1. 指定冲突的判断依据：必须和表定义的主键或唯一约束完全匹配
+        //         OnConflict::columns([
+        //             entities::reading::Column::SensorId,
+        //             entities::reading::Column::Timestamp,
+        //         ])
+        //         // 2. 指定冲突发生时要做的操作：更新指定的列
+        //         .update_columns([
+        //             entities::reading::Column::RawValue,
+        //             entities::reading::Column::Value,
+        //         ]),
+        //     )
+        //     .exec(&txn)
+        //     .await
+        //     .map_err(|e| e.to_string())?;
 
         for (key, value) in self.metadata.clone().unwrap_or_default() {
             let metadata = entities::sensor_metadata::ActiveModel {
@@ -103,9 +145,12 @@ impl StoreReading for IoTReading {
             };
             entities::prelude::SensorMetadata::insert(metadata)
                 .on_conflict(
-                    OnConflict::columns(vec![entities::sensor_metadata::Column::SensorId, entities::sensor_metadata::Column::Key])
-                        .update_columns(vec![entities::sensor_metadata::Column::Value])
-                        .to_owned(),
+                    OnConflict::columns(vec![
+                        entities::sensor_metadata::Column::SensorId,
+                        entities::sensor_metadata::Column::Key,
+                    ])
+                    .update_columns(vec![entities::sensor_metadata::Column::Value])
+                    .to_owned(),
                 )
                 .exec(&txn)
                 .await
@@ -113,7 +158,9 @@ impl StoreReading for IoTReading {
         }
 
         txn.commit().await.map_err(|e| e.to_string())?;
-        READINGS_SAVED_TOTAL.with_label_values(&[flow_id.to_string().as_str()]).inc();
+        READINGS_SAVED_TOTAL
+            .with_label_values(&[flow_id.to_string().as_str()])
+            .inc();
         Ok(())
     }
 }
@@ -128,26 +175,25 @@ mod iot_reading_tests {
     #[tokio::test]
     async fn test_store() {
         let db = MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
-            .append_query_results([
-                vec![entities::sensor::Model {
-                    id: 1,
-                    identifier: "identifier".to_string(),
-                    measuring: "measuring".to_string(),
-                    unit: IotUnit::DegreesCelcius,
-                    value_type: IotFieldType::Number,
-                    flow_id: Some(1),
-                }]
-            ])
-            .append_query_results([
-                vec![entities::reading::Model {
-                    id: 1,
-                    sensor_id: 1,
-                    value: Some(1.0),
-                    raw_value: "1.0".to_string(),
-                    timestamp: chrono::Utc::now().naive_utc(),
-                }]
-            ])
-            .append_exec_results([MockExecResult { last_insert_id: 1, rows_affected: 1 }])
+            .append_query_results([vec![entities::sensor::Model {
+                id: 1,
+                identifier: "identifier".to_string(),
+                measuring: "measuring".to_string(),
+                unit: IotUnit::DegreesCelcius,
+                value_type: IotFieldType::Number,
+                flow_id: Some(1),
+            }]])
+            .append_query_results([vec![entities::reading::Model {
+                id: 1,
+                sensor_id: 1,
+                value: Some(1.0),
+                raw_value: "1.0".to_string(),
+                timestamp: chrono::Utc::now(),
+            }]])
+            .append_exec_results([MockExecResult {
+                last_insert_id: 1,
+                rows_affected: 1,
+            }])
             .into_connection();
 
         let reading = IoTReading {
@@ -188,40 +234,46 @@ mod iot_reading_tests {
     #[tokio::test]
     async fn store_with_metadata() {
         let db = MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
-            .append_query_results([
-                vec![entities::sensor::Model {
-                    id: 1,
-                    identifier: "identifier".to_string(),
-                    measuring: "measuring".to_string(),
-                    unit: IotUnit::DegreesCelcius,
-                    value_type: IotFieldType::Number,
-                    flow_id: Some(1),
-                }]
-            ])
-            .append_query_results([
-                vec![entities::reading::Model {
-                    id: 1,
-                    sensor_id: 1,
-                    value: Some(1.0),
-                    raw_value: "1.0".to_string(),
-                    timestamp: chrono::Utc::now().naive_utc(),
-                }]
-            ])
-            .append_query_results([
-                vec![entities::sensor_metadata::Model {
-                    id: 1,
-                    sensor_id: 1,
-                    key: "key".to_string(),
-                    value: "value".to_string(),
-                }]
-            ])
-            .append_exec_results([MockExecResult { last_insert_id: 1, rows_affected: 1 }])
-            .append_exec_results([MockExecResult { last_insert_id: 1, rows_affected: 1 }])
-            .append_exec_results([MockExecResult { last_insert_id: 1, rows_affected: 1 }])
+            .append_query_results([vec![entities::sensor::Model {
+                id: 1,
+                identifier: "identifier".to_string(),
+                measuring: "measuring".to_string(),
+                unit: IotUnit::DegreesCelcius,
+                value_type: IotFieldType::Number,
+                flow_id: Some(1),
+            }]])
+            .append_query_results([vec![entities::reading::Model {
+                id: 1,
+                sensor_id: 1,
+                value: Some(1.0),
+                raw_value: "1.0".to_string(),
+                timestamp: chrono::Utc::now(),
+            }]])
+            .append_query_results([vec![entities::sensor_metadata::Model {
+                id: 1,
+                sensor_id: 1,
+                key: "key".to_string(),
+                value: "value".to_string(),
+            }]])
+            .append_exec_results([MockExecResult {
+                last_insert_id: 1,
+                rows_affected: 1,
+            }])
+            .append_exec_results([MockExecResult {
+                last_insert_id: 1,
+                rows_affected: 1,
+            }])
+            .append_exec_results([MockExecResult {
+                last_insert_id: 1,
+                rows_affected: 1,
+            }])
             .into_connection();
 
         let mut metadata = serde_json::Map::new();
-        metadata.insert("key".to_string(), serde_json::Value::String("value".to_string()));
+        metadata.insert(
+            "key".to_string(),
+            serde_json::Value::String("value".to_string()),
+        );
 
         let reading = IoTReading {
             identifier: "identifier".to_string(),
@@ -261,7 +313,10 @@ mod iot_reading_tests {
             timestamp: chrono::Utc::now(),
             metadata: None,
         };
-        assert_eq!(reading.get_value_json().unwrap(), serde_json::json!({"key": "value"}));
+        assert_eq!(
+            reading.get_value_json().unwrap(),
+            serde_json::json!({"key": "value"})
+        );
     }
 
     #[test]

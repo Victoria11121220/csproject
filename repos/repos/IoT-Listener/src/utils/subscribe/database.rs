@@ -1,15 +1,14 @@
-use std::{ collections::HashMap, sync::Arc };
+use std::{collections::HashMap, sync::Arc};
 
 use chrono::DateTime;
 use petgraph::graph::NodeIndex;
-use sea_orm::{ ColumnTrait as _, DatabaseConnection, EntityTrait as _, QueryFilter as _ };
-use tokio::{ sync::mpsc::UnboundedSender, task::JoinHandle };
+use sea_orm::{ColumnTrait as _, DatabaseConnection, EntityTrait as _, QueryFilter as _};
+use tokio::{sync::mpsc::UnboundedSender, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
+use tracing::info;
 
 use crate::{
-	entities,
-	nodes::datalake::ThreadSafeReadingStore,
-	sources::traits::SubscriptionResult,
+    entities, nodes::datalake::ThreadSafeReadingStore, sources::traits::SubscriptionResult,
 };
 
 use super::subscribe_and_restart;
@@ -26,25 +25,26 @@ const QUERY_INTERVAL: u64 = 5; // seconds
 /// # Returns
 /// A vector of readings
 async fn read_latest_readings(
-	database: &DatabaseConnection,
-	sensor_ids: Vec<i32>,
-	timestamp: DateTime<chrono::Utc>
+    database: &DatabaseConnection,
+    sensor_ids: Vec<i32>,
+    timestamp: DateTime<chrono::Utc>,
 ) -> Result<
-	Vec<(entities::reading::Model, Option<entities::sensor::Model>)>,
-	Box<dyn std::error::Error>
+    Vec<(entities::reading::Model, Option<entities::sensor::Model>)>,
+    Box<dyn std::error::Error>,
 > {
-	let to_time = timestamp + chrono::Duration::seconds(QUERY_INTERVAL as i64);
-	entities::reading::Entity
-		::find()
-		.find_also_related(entities::sensor::Entity)
-		.filter(entities::reading::Column::SensorId.is_in(sensor_ids))
-		.filter(entities::reading::Column::Timestamp.gt(timestamp))
-		.filter(entities::reading::Column::Timestamp.lt(to_time))
-		.all(database).await
-		.map_err(|e| {
-			error!("Failed to read latest readings: {}", e);
-			Box::new(e) as Box<dyn std::error::Error>
-		})
+    let to_time = timestamp - chrono::Duration::seconds(3600 as i64);
+    info!("reading {:?} -> {:?}", timestamp, to_time);
+    entities::reading::Entity::find()
+        .find_also_related(entities::sensor::Entity)
+        .filter(entities::reading::Column::SensorId.is_in(sensor_ids))
+        // .filter(entities::reading::Column::Timestamp.gt(timestamp))
+        // .filter(entities::reading::Column::Timestamp.lt(to_time))
+        .all(database)
+        .await
+        .map_err(|e| {
+            error!("Failed to read latest readings: {}", e);
+            Box::new(e) as Box<dyn std::error::Error>
+        })
 }
 
 /// Polls the database for new readings and updates the reading stores
@@ -59,20 +59,20 @@ async fn read_latest_readings(
 /// # Returns
 /// A subscription result
 fn poll_and_update_readings(
-	node_idx_mapping: HashMap<i32, Vec<NodeIndex>>,
-	node_store_mapping: HashMap<i32, Vec<ThreadSafeReadingStore>>,
-	cancellation_token: &CancellationToken,
-	tx: UnboundedSender<Vec<NodeIndex>>,
-	db: Arc<DatabaseConnection>
+    node_idx_mapping: HashMap<i32, Vec<NodeIndex>>,
+    node_store_mapping: HashMap<i32, Vec<ThreadSafeReadingStore>>,
+    cancellation_token: &CancellationToken,
+    tx: UnboundedSender<Vec<NodeIndex>>,
+    db: Arc<DatabaseConnection>,
 ) -> SubscriptionResult {
-	let cancellation_token = cancellation_token.clone();
-	let sensor_ids: Vec<i32> = node_idx_mapping.keys().cloned().collect();
-	Ok(
-		tokio::spawn(async move {
-			info!("Initialised database polling thread");
-			loop {
-				let last_update = chrono::Utc::now();
-				tokio::select! {
+    let cancellation_token = cancellation_token.clone();
+    let sensor_ids: Vec<i32> = node_idx_mapping.keys().cloned().collect();
+    info!("Found sensor ids: {:?}", sensor_ids);
+    Ok(tokio::spawn(async move {
+        info!("Initialised database polling thread");
+        loop {
+            let last_update = chrono::Utc::now();
+            tokio::select! {
                 _ = cancellation_token.cancelled() => {
                     info!("Cancelling postgres event listener");
                     return;
@@ -82,6 +82,7 @@ fn poll_and_update_readings(
                     let new_readings = read_latest_readings(&db, sensor_ids.clone(), last_update).await;
                     match new_readings {
                         Ok(readings) => {
+                            info!("Found new readings: {}", readings.len());
                             // Filter out readings with no sensor
                             let readings = readings
                                 .into_iter()
@@ -130,9 +131,8 @@ fn poll_and_update_readings(
                     }
                 }
             }
-			}
-		})
-	)
+        }
+    }))
 }
 
 /// Spawns a thread for polling the database,
@@ -149,104 +149,100 @@ fn poll_and_update_readings(
 /// # Returns
 /// A join handle for the subscription task
 pub fn watch_database(
-	node_idx_mapping: HashMap<i32, Vec<NodeIndex>>,
-	node_store_mapping: HashMap<i32, Vec<ThreadSafeReadingStore>>,
-	cancellation_token: &CancellationToken,
-	tx: UnboundedSender<Vec<NodeIndex>>,
-	db: Arc<DatabaseConnection>
+    node_idx_mapping: HashMap<i32, Vec<NodeIndex>>,
+    node_store_mapping: HashMap<i32, Vec<ThreadSafeReadingStore>>,
+    cancellation_token: &CancellationToken,
+    tx: UnboundedSender<Vec<NodeIndex>>,
+    db: Arc<DatabaseConnection>,
 ) -> JoinHandle<()> {
-	let cancellation_token = cancellation_token.clone();
-	let subscription_cancellation_token = cancellation_token.clone();
-	subscribe_and_restart(
-		move || {
-			let db = db.clone();
-			let node_idx_mapping = node_idx_mapping.clone();
-			let node_store_mapping = node_store_mapping.clone();
-			poll_and_update_readings(
-				node_idx_mapping,
-				node_store_mapping,
-				&cancellation_token,
-				tx.clone(),
-				db
-			)
-		},
-		&subscription_cancellation_token,
-		"Database"
-	)
+    let cancellation_token = cancellation_token.clone();
+    let subscription_cancellation_token = cancellation_token.clone();
+    subscribe_and_restart(
+        move || {
+            let db = db.clone();
+            let node_idx_mapping = node_idx_mapping.clone();
+            let node_store_mapping = node_store_mapping.clone();
+            poll_and_update_readings(
+                node_idx_mapping,
+                node_store_mapping,
+                &cancellation_token,
+                tx.clone(),
+                db,
+            )
+        },
+        &subscription_cancellation_token,
+        "Database",
+    )
 }
 
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-	use sea_orm::MockDatabase;
+    use sea_orm::MockDatabase;
 
-	use super::*;
+    use super::*;
 
-	#[tokio::test]
-	async fn test_read_latest_readings() {
-		let db = MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
-			.append_query_results(
-				vec![
-					vec![(
-						entities::reading::Model {
-							id: 1,
-							sensor_id: 1,
-							value: Some(10.0),
-							raw_value: "10.0".to_string(),
-							timestamp: chrono::Utc::now().naive_utc(),
-						},
-						Some(entities::sensor::Model {
-							id: 1,
-							flow_id: Some(1),
-							identifier: "Sensor 1".to_string(),
-							measuring: "Temperature".to_string(),
-							unit: entities::sea_orm_active_enums::IotUnit::DegreesCelcius,
-							value_type: entities::sea_orm_active_enums::IotFieldType::Number,
-						}),
-					)]
-				]
-			)
-			.into_connection();
+    #[tokio::test]
+    async fn test_read_latest_readings() {
+        let db = MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
+            .append_query_results(vec![vec![(
+                entities::reading::Model {
+                    id: 1,
+                    sensor_id: 1,
+                    value: Some(10.0),
+                    raw_value: "10.0".to_string(),
+                    timestamp: chrono::Utc::now()
+                },
+                Some(entities::sensor::Model {
+                    id: 1,
+                    flow_id: Some(1),
+                    identifier: "Sensor 1".to_string(),
+                    measuring: "Temperature".to_string(),
+                    unit: entities::sea_orm_active_enums::IotUnit::DegreesCelcius,
+                    value_type: entities::sea_orm_active_enums::IotFieldType::Number,
+                }),
+            )]])
+            .into_connection();
 
-		let sensor_ids = vec![1];
-		let timestamp = chrono::Utc::now() - chrono::Duration::seconds(10);
-		let result = read_latest_readings(&db, sensor_ids.clone(), timestamp).await;
-		assert!(result.is_ok());
-		let readings = result.unwrap();
-		assert_eq!(readings.len(), 1);
-		assert_eq!(readings[0].0.sensor_id, 1);
-		assert_eq!(readings[0].1.as_ref().unwrap().id, 1);
+        let sensor_ids = vec![1];
+        let timestamp = chrono::Utc::now() - chrono::Duration::seconds(10);
+        let result = read_latest_readings(&db, sensor_ids.clone(), timestamp).await;
+        assert!(result.is_ok());
+        let readings = result.unwrap();
+        assert_eq!(readings.len(), 1);
+        assert_eq!(readings[0].0.sensor_id, 1);
+        assert_eq!(readings[0].1.as_ref().unwrap().id, 1);
 
-		// Test with error
-		let db = MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
-			.append_query_errors(
-				vec![sea_orm::DbErr::Query(sea_orm::RuntimeErr::Internal("Error".to_string()))]
-			)
-			.into_connection();
-		let result = read_latest_readings(&db, sensor_ids, timestamp).await;
-		assert!(result.is_err());
-		let error = result.unwrap_err();
-		assert_eq!(error.to_string(), "Query Error: Error");
-	}
+        // Test with error
+        let db = MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
+            .append_query_errors(vec![sea_orm::DbErr::Query(sea_orm::RuntimeErr::Internal(
+                "Error".to_string(),
+            ))])
+            .into_connection();
+        let result = read_latest_readings(&db, sensor_ids, timestamp).await;
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert_eq!(error.to_string(), "Query Error: Error");
+    }
 
-	#[tokio::test]
-	async fn test_cancel_watch_database() {
-		let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-		let cancellation_token = CancellationToken::new();
-		let db = Arc::new(MockDatabase::new(sea_orm::DatabaseBackend::Postgres).into_connection());
-		let node_idx_mapping = HashMap::<i32, Vec<NodeIndex>>::new();
-		let node_store_mapping = HashMap::<i32, Vec<ThreadSafeReadingStore>>::new();
+    #[tokio::test]
+    async fn test_cancel_watch_database() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let cancellation_token = CancellationToken::new();
+        let db = Arc::new(MockDatabase::new(sea_orm::DatabaseBackend::Postgres).into_connection());
+        let node_idx_mapping = HashMap::<i32, Vec<NodeIndex>>::new();
+        let node_store_mapping = HashMap::<i32, Vec<ThreadSafeReadingStore>>::new();
 
-		let handle = watch_database(
-			node_idx_mapping,
-			node_store_mapping,
-			&cancellation_token,
-			tx.clone(),
-			db
-		);
-		cancellation_token.cancel();
-		handle.await.unwrap();
-		// Should error if the cancellation was successful
-		assert!(rx.try_recv().is_err());
-	}
+        let handle = watch_database(
+            node_idx_mapping,
+            node_store_mapping,
+            &cancellation_token,
+            tx.clone(),
+            db,
+        );
+        cancellation_token.cancel();
+        handle.await.unwrap();
+        // Should error if the cancellation was successful
+        assert!(rx.try_recv().is_err());
+    }
 }

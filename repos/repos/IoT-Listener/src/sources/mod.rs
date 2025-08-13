@@ -1,5 +1,6 @@
 pub mod mas_monitor;
 pub mod mqtt;
+pub mod kafka;
 pub mod traits;
 
 use crate::{graph::types::NodeData, nodes::sources::SourceConfig};
@@ -19,4 +20,5 @@ pub enum Source {
     #[serde(rename = "MAS-MONITOR")]
     MASMonitor(mas_monitor::MASMonitorSource),
     Mqtt(mqtt::MQTTSource),
+    Kafka(kafka::KafkaSource),
 }
