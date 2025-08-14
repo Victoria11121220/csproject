@@ -6,7 +6,7 @@ Set environment variable `DATABASE_URL` and then run:
 The IoT Listener supports multiple data sources:
 ### MQTT Source
 Configuration example:
-'''
+```json
 {
   "id": "mqtt-source-1",
   "type": "source",
@@ -16,4 +16,5 @@ Configuration example:
       "topic": "sensor/temperature"
     }
   }
+}
 }
