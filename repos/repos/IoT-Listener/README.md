@@ -17,4 +17,5 @@ Configuration example:
     }
   }
 }
-}
+
+### MAS Monitor Source
