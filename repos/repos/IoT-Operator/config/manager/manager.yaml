@@ -28,23 +28,23 @@ spec:
       labels:
         control-plane: controller-manager
     spec:
-      # Pod 级别的安全上下文
+      # Pod-level security context
       securityContext:
         runAsNonRoot: true
         fsGroup: 65534
         # seccompProfile:
         #   type: RuntimeDefault
       
-      # 定义 Pod 可以使用的卷 (Volumes)
+      # Defining Volumes that Pods can use
       volumes:
       - name: config-volume
         configMap:
-          name: listener-operator-config # 对应我们创建的 ConfigMap
+          name: listener-operator-config # Corresponding to the ConfigMap created
       - name: secret-volume
         secret:
-          secretName: listener-operator-secrets # 对应我们创建的 Secret
+          secretName: listener-operator-secrets # Corresponding to the Secret created
           
-      # 容器列表
+      # Container List
       containers:
       - command:
         - /manager
@@ -53,21 +53,21 @@ spec:
         image: controller:latest
         name: manager
         
-        # 将上面定义的卷挂载到容器内部
+        # Mount the volume defined above into the container
         volumeMounts:
         - name: config-volume
-          mountPath: /etc/config # 挂载配置
+          mountPath: /etc/config # Mount configuration
         - name: secret-volume
-          mountPath: /etc/secrets # 挂载密钥
+          mountPath: /etc/secrets # Mount the key
           
-        # 容器级别的安全上下文
+        # Container-level security context
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
             drop:
             - "ALL"
             
-        # 健康检查探针
+        # Health check probes
         livenessProbe:
           httpGet:
             path: /healthz
@@ -81,7 +81,7 @@ spec:
           initialDelaySeconds: 5
           periodSeconds: 10
           
-        # 资源请求和限制
+        # Resource requests and limits
         resources:
           limits:
             cpu: 500m
@@ -90,6 +90,6 @@ spec:
             cpu: 10m
             memory: 64Mi
             
-      # Pod 使用的服务账户
+      # The service account used by the Pod
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10
