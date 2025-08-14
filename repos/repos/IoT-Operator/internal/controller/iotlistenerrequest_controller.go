@@ -114,7 +114,7 @@ type IoTListenerRequestReconciler struct {
 
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;update;patch;delete
 
-// 如果你的 Operator 还需要创建 Service 或 Deployment，也需要相应的权限
+// If your Operator also needs to create a Service or Deployment, you also need the corresponding permissions
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 

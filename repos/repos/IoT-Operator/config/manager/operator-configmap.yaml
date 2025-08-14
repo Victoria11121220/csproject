@@ -3,29 +3,29 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: listener-operator-config
-  namespace: system # 必须和 Deployment 的 namespace 一致
+  namespace: system # Must be consistent with the namespace of the Deployment
 data:
-  # 键名 (key) 将成为文件名
-  # 值 (value) 将成为文件内容
+  # The key will become the file name
+  # The value will be the file contents
 
-  # 对应 ./etc/config/LISTENER_IMAGE
+  # Corresponds to ./etc/config/LISTENER_IMAGE
   LISTENER_IMAGE: "iot-listener:dev"
 
-  # 对应 ./etc/config/LISTENER_IMAGE_PULL_POLICY
-  # 可选值: Always, Never, IfNotPresent
+  # Corresponds to ./etc/config/LISTENER_IMAGE_PULL_POLICY
+  # Optional values: Always, Never, IfNotPresent
   LISTENER_IMAGE_PULL_POLICY: "IfNotPresent"
 
-  # 对应 ./etc/config/LISTENER_IMAGE_PULL_SECRET
-  # 这里填写你的镜像拉取凭证的 Secret 名字，如果没有，留空
+  # Corresponds to ./etc/config/LISTENER_IMAGE_PULL_SECRET
+  # Fill in the Secret name of your image pull credential here, if you don’t have one, leave it blank
   LISTENER_IMAGE_PULL_SECRET: ""
 
-  # 对应 ./etc/config/RELEASE_NAME
+  # Corresponds to ./etc/config/RELEASE_NAME
   RELEASE_NAME: "iot-listener"
 
-  # 对应 ./etc/config/HOST_ALIASES
-  # 这是一个 JSON 字符串，如果没有可以留空或填 "[]"
+  # Corresponds to ./etc/config/HOST_ALIASES
+  # This is a JSON string. If not, leave it blank or fill it with "[]"
   HOST_ALIASES: "[]"
 
-  # 对应 ./etc/config/LISTENER_POD_ANNOTATIONS
-  # 这是一个 JSON 字符串，如果没有可以留空或填 "{}"
+  # Corresponds to ./etc/config/LISTENER_POD_ANNOTATIONS
+  # This is a JSON string. If not, leave it blank or fill it with "{}"
   LISTENER_POD_ANNOTATIONS: "{}"
