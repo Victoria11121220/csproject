@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -82,3 +83,7 @@ var _ = Describe("IoTListenerRequest Controller", func() {
 		})
 	})
 })
+
+func TestPooling(t *testing.T) {
+
+}

@@ -18,11 +18,18 @@ package controller
 
 import (
 	"context"
-	"strconv"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"time"
 
+	_ "github.com/lib/pq" // PostgreSQL driver
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -31,144 +38,313 @@ import (
 )
 
 const (
-	ListenerImageName = "iot-listener"
+	CollectorImageName = "iot-collector"
+	ProcessorImageName = "iot-processor"
+	ManagedByLabel     = "app.kubernetes.io/managed-by"
+	FlowIdLabel        = "iot.visualiseinfo.com/flow-id"
+	PollingInterval    = 30 * time.Second
 )
 
-// Function to create a Pod given a custom resource
-func (r *IoTListenerRequestReconciler) createPod(cr iotv1alpha1.IoTListenerRequest) *corev1.Pod {
-
-	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      cr.Name,
-			Namespace: cr.Namespace,
-			Labels: map[string]string{
-				"app": ListenerImageName,
-			},
-			OwnerReferences: []metav1.OwnerReference{
-				*metav1.NewControllerRef(&cr, iotv1alpha1.GroupVersion.WithKind("IoTListenerRequest")),
-			},
-			Annotations: r.PodAnnotations,
-		},
-		Spec: corev1.PodSpec{
-			HostAliases: r.HostAliases,
-			Containers: []corev1.Container{
-				{
-					Name:  ListenerImageName,
-					Image: r.ListenerImage,
-					Env: []corev1.EnvVar{
-						{
-							Name:  "flow_id",
-							Value: strconv.Itoa(int(cr.Spec.FlowID)),
-						},
-						{
-							Name:  "nodes",
-							Value: cr.Spec.Nodes,
-						},
-						{
-							Name:  "edges",
-							Value: cr.Spec.Edges,
-						},
-						{
-							Name:  "uri",
-							Value: r.DatabaseUri,
-						},
-						{
-							Name:  "ROCKET_ADDRESS",
-							Value: "0.0.0.0",
-						},
-					},
-					ImagePullPolicy: corev1.PullIfNotPresent,
-					Ports: []corev1.ContainerPort{
-						{
-							ContainerPort: 8000,
-							Name:          "metrics",
-						},
-					},
-				},
-			},
-			ImagePullSecrets: []corev1.LocalObjectReference{
-				{
-					Name: r.ImagePullSecret,
-				},
-			},
-		},
-	}
+// IoTFlow represents the structure of a flow fetched from the database
+type IoTFlow struct {
+	ID    int
+	Nodes string // JSON string
+	Edges string // JSON string
 }
 
 // IoTListenerRequestReconciler reconciles a IoTListenerRequest object
 type IoTListenerRequestReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	corev1.PullPolicy
+	Scheme          *runtime.Scheme
 	ImagePullSecret string
-	ListenerImage   string
+	CollectorImage  string
+	ProcessorImage  string
 	DatabaseUri     string
-	ReleaseName     string
-	HostAliases     []corev1.HostAlias
-	PodAnnotations  map[string]string
+	KafkaBrokers    string
+	KafkaTopic      string
+	DB              *sql.DB
 }
 
-//+kubebuilder:rbac:groups=iot.visualiseinfo.com,resources=iotlistenerrequests,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=iot.visualiseinfo.com,resources=iotlistenerrequests/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=iot.visualiseinfo.com,resources=iotlistenerrequests/finalizers,verbs=update
-
-//+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;update;patch;delete
-
-// If your Operator also needs to create a Service or Deployment, you also need the corresponding permissions
+//+kubebuilder:rbac:groups=iot.visualiseinfo.com,resources=iotlistenerrequests,verbs=get;list;watch
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.17.3/pkg/reconcile
 func (r *IoTListenerRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = log.FromContext(ctx)
+	log := log.FromContext(ctx)
 
-	// Fetch all custom resources
-	listenerRequests := &iotv1alpha1.IoTListenerRequestList{}
-	err := r.Client.List(ctx, listenerRequests)
-	if err != nil {
-		log.FromContext(ctx).Error(err, "Failed to list IoTListenerRequests")
-	}
-
-	// Fetch all pods with the label "app=iot-listener"
-	podList := &corev1.PodList{}
-	err = r.Client.List(ctx, podList, client.MatchingLabels{"app": ListenerImageName})
-	if err != nil {
-		log.FromContext(ctx).Error(err, "Failed to list pods")
-	}
-
-	// Iterate over the custom resources
-	for _, listenerRequest := range listenerRequests.Items {
-		// Check if pod exists
-		foundPod := &corev1.Pod{}
-		err = r.Client.Get(ctx, client.ObjectKey{Namespace: listenerRequest.Namespace, Name: listenerRequest.Name}, foundPod)
+	// --- Database Polling Logic ---
+	if r.DB == nil {
+		log.Info("Initializing database connection")
+		db, err := sql.Open("postgres", r.DatabaseUri)
 		if err != nil {
-			if client.IgnoreNotFound(err) == nil {
-				// Create the pod
-				foundPod = r.createPod(listenerRequest)
-				err = r.Client.Create(ctx, foundPod)
-				log.FromContext(ctx).Info("Creating pod", "pod", foundPod.Name)
-				if err != nil {
-					log.FromContext(ctx).Error(err, "Failed to create pod", "pod", foundPod.Name)
-				}
-			} else {
-				log.FromContext(ctx).Error(err, "Failed to get pod", "pod", listenerRequest.Name)
+			log.Error(err, "Failed to connect to database")
+			return ctrl.Result{}, err // Return error to retry connection
+		}
+		r.DB = db
+	}
+
+	rows, err := r.DB.QueryContext(ctx, "SELECT id, nodes, edges FROM iot_flow")
+	if err != nil {
+		log.Error(err, "Failed to query iot_flow table")
+		return ctrl.Result{RequeueAfter: PollingInterval}, err
+	}
+	defer rows.Close()
+
+	dbFlows := make(map[string]IoTFlow)
+	for rows.Next() {
+		var flow IoTFlow
+		if err := rows.Scan(&flow.ID, &flow.Nodes, &flow.Edges); err != nil {
+			log.Error(err, "Failed to scan flow row")
+			continue
+		}
+		flowIDStr := fmt.Sprintf("%d", flow.ID)
+		dbFlows[flowIDStr] = flow
+	}
+
+	log.Info(fmt.Sprintf("Found %d flows in database", len(dbFlows)))
+
+	// --- Reconciliation Logic ---
+	for flowID, flow := range dbFlows {
+		log.Info("Reconciling flow", "flowID", flowID)
+
+		sourcesConfig, err := extractSourcesFromNodes(flow.Nodes)
+		if err != nil {
+			log.Error(err, "Failed to extract sources from nodes JSON", "flowID", flowID)
+			continue
+		}
+
+		// Reconcile ConfigMap for Collector
+		cmCollector := r.defineCollectorConfigMap(flowID, sourcesConfig)
+		if err := r.reconcileConfigMap(ctx, cmCollector); err != nil {
+			log.Error(err, "Failed to reconcile collector configmap", "flowID", flowID)
+			continue
+		}
+
+		// Reconcile ConfigMap for Processor
+		cmProcessor := r.defineProcessorConfigMap(flowID, flow.Nodes, flow.Edges)
+		if err := r.reconcileConfigMap(ctx, cmProcessor); err != nil {
+			log.Error(err, "Failed to reconcile processor configmap", "flowID", flowID)
+			continue
+		}
+
+		// Reconcile Deployment for Collector
+		deplCollector := r.defineCollectorDeployment(flowID, cmCollector.Name)
+		if err := r.reconcileDeployment(ctx, deplCollector); err != nil {
+			log.Error(err, "Failed to reconcile collector deployment", "flowID", flowID)
+			continue
+		}
+
+		// Reconcile Deployment for Processor
+		deplProcessor := r.defineProcessorDeployment(flowID, cmProcessor.Name)
+		if err := r.reconcileDeployment(ctx, deplProcessor); err != nil {
+			log.Error(err, "Failed to reconcile processor deployment", "flowID", flowID)
+			continue
+		}
+	}
+
+	// --- Cleanup Logic ---
+	if err := r.cleanupOrphanedResources(ctx, dbFlows); err != nil {
+		log.Error(err, "Failed to cleanup orphaned resources")
+	}
+
+	return ctrl.Result{RequeueAfter: PollingInterval}, nil
+}
+
+// extractSourcesFromNodes parses the nodes JSON and returns a new JSON array of source nodes
+func extractSourcesFromNodes(nodesJSON string) (string, error) {
+	var nodes []map[string]interface{}
+	if err := json.Unmarshal([]byte(nodesJSON), &nodes); err != nil {
+		return "", err
+	}
+
+	var sourceNodes []map[string]interface{}
+	for _, node := range nodes {
+		if nodeType, ok := node["type"].(string); ok && nodeType == "source" {
+			// The Rust collector expects the 'value' part of the source node.
+			if value, ok := node["value"]; ok {
+				sourceNodes = append(sourceNodes, value.(map[string]interface{}))
 			}
 		}
 	}
 
-	return ctrl.Result{}, nil
+	sourcesJSON, err := json.Marshal(sourceNodes)
+	if err != nil {
+		return "", err
+	}
 
+	return string(sourcesJSON), nil
 }
 
-// SetupWithManager sets up the controller with the Manager.
-func (r *IoTListenerRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *IoTListenerRequestReconciler) reconcileConfigMap(ctx context.Context, cm *corev1.ConfigMap) error {
+	found := &corev1.ConfigMap{}
+	err := r.Get(ctx, types.NamespacedName{Name: cm.Name, Namespace: cm.Namespace}, found)
+	if err != nil && errors.IsNotFound(err) {
+		log.FromContext(ctx).Info("Creating a new ConfigMap", "ConfigMap.Namespace", cm.Namespace, "ConfigMap.Name", cm.Name)
+		return r.Create(ctx, cm)
+	} else if err != nil {
+		return err
+	}
 
+	if fmt.Sprintf("%v", found.Data) != fmt.Sprintf("%v", cm.Data) {
+		found.Data = cm.Data
+		log.FromContext(ctx).Info("Updating ConfigMap", "ConfigMap.Name", cm.Name)
+		return r.Update(ctx, found)
+	}
+	return nil
+}
+
+func (r *IoTListenerRequestReconciler) reconcileDeployment(ctx context.Context, depl *appsv1.Deployment) error {
+	found := &appsv1.Deployment{}
+	err := r.Get(ctx, types.NamespacedName{Name: depl.Name, Namespace: depl.Namespace}, found)
+	if err != nil && errors.IsNotFound(err) {
+		log.FromContext(ctx).Info("Creating a new Deployment", "Deployment.Namespace", depl.Namespace, "Deployment.Name", depl.Name)
+		return r.Create(ctx, depl)
+	} else if err != nil {
+		return err
+	}
+	// Naive update, a real implementation should be smarter
+	found.Spec = depl.Spec
+	return r.Update(ctx, found)
+}
+
+func (r *IoTListenerRequestReconciler) cleanupOrphanedResources(ctx context.Context, dbFlows map[string]IoTFlow) error {
+	log := log.FromContext(ctx)
+	// List all deployments managed by this operator
+	deplList := &appsv1.DeploymentList{}
+	if err := r.List(ctx, deplList, client.MatchingLabels{ManagedByLabel: "iot-operator"}); err != nil {
+		return err
+	}
+
+	for _, depl := range deplList.Items {
+		if flowID, ok := depl.Labels[FlowIdLabel]; ok {
+			if _, existsInDb := dbFlows[flowID]; !existsInDb {
+				log.Info("Deleting orphaned deployment", "deployment", depl.Name)
+				if err := r.Delete(ctx, &depl); err != nil {
+					log.Error(err, "Failed to delete orphaned deployment", "deployment", depl.Name)
+				}
+			}
+		}
+	}
+
+	// Cleanup ConfigMaps similarly
+	cmList := &corev1.ConfigMapList{}
+	if err := r.List(ctx, cmList, client.MatchingLabels{ManagedByLabel: "iot-operator"}); err != nil {
+		return err
+	}
+	for _, cm := range cmList.Items {
+		if flowID, ok := cm.Labels[FlowIdLabel]; ok {
+			if _, existsInDb := dbFlows[flowID]; !existsInDb {
+				log.Info("Deleting orphaned configmap", "configmap", cm.Name)
+				if err := r.Delete(ctx, &cm); err != nil {
+					log.Error(err, "Failed to delete orphaned configmap", "configmap", cm.Name)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// --- Resource Definitions ---
+
+func (r *IoTListenerRequestReconciler) defineCollectorConfigMap(flowID string, sourcesConfig string) *corev1.ConfigMap {
+	name := fmt.Sprintf("collector-config-%s", flowID)
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default", // Or from a config
+			Labels:    map[string]string{ManagedByLabel: "iot-operator", FlowIdLabel: flowID},
+		},
+		Data: map[string]string{
+			"SOURCES": sourcesConfig,
+		},
+	}
+}
+
+func (r *IoTListenerRequestReconciler) defineProcessorConfigMap(flowID string, nodes string, edges string) *corev1.ConfigMap {
+	name := fmt.Sprintf("processor-config-%s", flowID)
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+			Labels:    map[string]string{ManagedByLabel: "iot-operator", FlowIdLabel: flowID},
+		},
+		Data: map[string]string{
+			"nodes":   nodes,
+			"edges":   edges,
+			"flow_id": flowID,
+		},
+	}
+}
+
+func (r *IoTListenerRequestReconciler) defineCollectorDeployment(flowID string, configMapName string) *appsv1.Deployment {
+	name := fmt.Sprintf("iot-collector-%s", flowID)
+	replicas := int32(1)
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+			Labels:    map[string]string{ManagedByLabel: "iot-operator", FlowIdLabel: flowID},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": name}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": name}},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name:    CollectorImageName,
+						Image:   r.CollectorImage,
+						EnvFrom: []corev1.EnvFromSource{{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: configMapName}}}},
+						Env: []corev1.EnvVar{
+							{Name: "KAFKA_BROKERS", Value: r.KafkaBrokers},
+							{Name: "KAFKA_TOPIC", Value: r.KafkaTopic},
+							{Name: "uri", Value: r.DatabaseUri},
+						},
+					}},
+				},
+			},
+		},
+	}
+}
+
+func (r *IoTListenerRequestReconciler) defineProcessorDeployment(flowID string, configMapName string) *appsv1.Deployment {
+	name := fmt.Sprintf("iot-processor-%s", flowID)
+	replicas := int32(1)
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+			Labels:    map[string]string{ManagedByLabel: "iot-operator", FlowIdLabel: flowID},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": name}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": name}},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name:    ProcessorImageName,
+						Image:   r.ProcessorImage,
+						EnvFrom: []corev1.EnvFromSource{{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: configMapName}}}},
+						Env: []corev1.EnvVar{
+							{Name: "KAFKA_BROKERS", Value: r.KafkaBrokers},
+							{Name: "KAFKA_TOPIC", Value: r.KafkaTopic},
+							{Name: "uri", Value: r.DatabaseUri},
+						},
+					}},
+				},
+			},
+		},
+	}
+}
+
+func (r *IoTListenerRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
+		// Watch for changes to primary resource IoTListenerRequest
+		// But the main logic is driven by polling, so this is just to satisfy the builder
 		For(&iotv1alpha1.IoTListenerRequest{}).
-		Owns(&corev1.Pod{}).
+		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.ConfigMap{}).
 		Complete(r)
 }
