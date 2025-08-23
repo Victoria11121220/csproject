@@ -1,54 +1,54 @@
 # k8s-manifests/postgres.yaml
 
-# 1. 创建一个 Secret 来存放数据库密码
-# 注意：这里我们直接用 stringData，Kubernetes 会自动为我们做 Base64 编码
+# 1. Create a Secret to store the database password
+# Note: Here we use stringData directly, and Kubernetes will automatically do Base64 encoding for us
 apiVersion: v1
 kind: Secret
 metadata:
   name: postgres-secret
-# --- 注意：这里没有 'spec' 字段 ---
+# --- NOTE: There is no 'spec' field ---
 type: Opaque
 stringData:
-  # 对应 POSTGRES_PASSWORD
+  # Corresponds to POSTGRES_PASSWORD
   POSTGRES_PASSWORD: "123456"
 
 ---
-# 2. 申请一块持久化存储
+# 2. Apply for a persistent storage
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: postgres-pvc
 spec:
-  # 访问模式：ReadWriteOnce 表示这个卷一次只能被一个节点读写
+  # Access mode: ReadWriteOnce means that this volume can only be read and written by one node at a time
   accessModes:
     - ReadWriteOnce
-  # 存储类型：Kind 默认提供了一个叫 'standard' 的 StorageClass
+  # Storage Type: Kind provides a StorageClass called 'standard' by default
   storageClassName: standard
   resources:
-    # 申请 1 GiB 的存储空间
+    # Request 1 GiB of storage space
     requests:
       storage: 1Gi
 
 ---
-# 3. 创建一个稳定的网络服务入口
+# 3. Create a stable network service entrance
 apiVersion: v1
 kind: Service
 metadata:
   name: postgres-service
 spec:
-  # 服务类型：ClusterIP 表示这个服务只在集群内部可见
+  # Service Type: ClusterIP means this service is only visible within the cluster
   type: ClusterIP
-  # 端口映射：将服务的 5432 端口映射到 Pod 的 5432 端口
+  # Port mapping: Map the service's port 5432 to the Pod's port 5432
   ports:
     - port: 5432
       targetPort: 5432
       protocol: TCP
-  # 选择器：这个服务会把流量转发给带有 'app: postgres' 标签的 Pod
+  # Selector: This Service will forward traffic to Pods with the label 'app: postgres'
   selector:
     app: postgres
 
 ---
-# 4. 创建 Deployment 来运行 PostgreSQL Pod
+# 4. Create a Deployment to run the PostgreSQL Pod
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -61,32 +61,32 @@ spec:
   template:
     metadata:
       labels:
-        # 这个标签要和 Service 的 selector 匹配
+        # This label must match the Service selector.
         app: postgres
     spec:
       containers:
         - name: postgres
           image: postgres:16
-          # 暴露容器的 5432 端口
+          # Expose the container's port 5432
           ports:
             - containerPort: 5432
           env:
-            # 环境变量：数据库名
+            # Environment variable: database name
             - name: POSTGRES_DB
               value: "iot_dataflow_manager"
-            # 环境变量：密码，从我们创建的 Secret 中引用
+            # Environment variable: password, referenced from the Secret we created
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: postgres-secret # Secret 的名字
-                  key: POSTGRES_PASSWORD # Secret 里的键
-          # 挂载我们申请的持久化存储
+                  name: postgres-secret # Secret Name
+                  key: POSTGRES_PASSWORD # Keys in Secrets
+          # Mount the persistent storage we applied for
           volumeMounts:
             - name: postgres-storage
-              # 挂载到 PostgreSQL 存放数据的默认路径
+              # Mount to the default path where PostgreSQL stores data
               mountPath: /var/lib/postgresql/data
-      # 定义卷，并关联到我们的 PVC
+      # Define the volume and associate it with our PVC
       volumes:
         - name: postgres-storage
           persistentVolumeClaim:
-            claimName: postgres-pvc # PVC 的名字
+            claimName: postgres-pvc # PVC name
