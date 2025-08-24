@@ -261,6 +261,7 @@ func (r *IoTListenerRequestReconciler) defineCollectorConfigMap(flowID string, s
 	}
 }
 
+// Define labels for the ConfigMap
 func (r *IoTListenerRequestReconciler) defineProcessorConfigMap(flowID string, nodes string, edges string) *corev1.ConfigMap {
 	name := fmt.Sprintf("processor-config-%s", flowID)
 	return &corev1.ConfigMap{
@@ -270,9 +271,8 @@ func (r *IoTListenerRequestReconciler) defineProcessorConfigMap(flowID string, n
 			Labels:    map[string]string{ManagedByLabel: "iot-operator", FlowIdLabel: flowID},
 		},
 		Data: map[string]string{
-			"nodes":   nodes,
-			"edges":   edges,
-			"flow_id": flowID,
+			"nodes": nodes,
+			"edges": edges,
 		},
 	}
 }
@@ -297,9 +297,10 @@ func (r *IoTListenerRequestReconciler) defineCollectorDeployment(flowID string, 
 						Image:   r.CollectorImage,
 						EnvFrom: []corev1.EnvFromSource{{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: configMapName}}}},
 						Env: []corev1.EnvVar{
-							{Name: "KAFKA_BROKERS", Value: r.KafkaBrokers},
-							{Name: "KAFKA_TOPIC", Value: r.KafkaTopic},
+							{Name: "KAFKA_BOOTSTRAP_SERVERS", Value: r.KafkaBrokers},
+							{Name: "KAFKA_PROCESSOR_TOPIC", Value: r.KafkaTopic},
 							{Name: "uri", Value: r.DatabaseUri},
+							{Name: "flow_id", Value: flowID},
 						},
 					}},
 				},
@@ -328,9 +329,11 @@ func (r *IoTListenerRequestReconciler) defineProcessorDeployment(flowID string, 
 						Image:   r.ProcessorImage,
 						EnvFrom: []corev1.EnvFromSource{{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: configMapName}}}},
 						Env: []corev1.EnvVar{
-							{Name: "KAFKA_BROKERS", Value: r.KafkaBrokers},
-							{Name: "KAFKA_TOPIC", Value: r.KafkaTopic},
+							{Name: "KAFKA_BOOTSTRAP_SERVERS", Value: r.KafkaBrokers},
+							{Name: "KAFKA_PROCESSOR_TOPIC", Value: r.KafkaTopic},
+							{Name: "KAFKA_PROCESSOR_GROUP_ID", Value: "iot-processor-group-" + flowID},
 							{Name: "uri", Value: r.DatabaseUri},
+							{Name: "flow_id", Value: flowID},
 						},
 					}},
 				},

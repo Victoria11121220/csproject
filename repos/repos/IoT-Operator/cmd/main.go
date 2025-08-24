@@ -87,34 +87,34 @@ func ReadConfig() Config {
 		config.ProcessorImage = string(processorImage)
 	}
 
-	if imagePullSecret := os.Getenv("IMAGE_PULL_SECRET"); imagePullSecret != "" {
+	if imagePullSecret := os.Getenv("LISTENER_IMAGE_PULL_SECRET"); imagePullSecret != "" {
 		config.ImagePullSecret = imagePullSecret
 	} else {
-		imagePullSecret, err := os.ReadFile("./etc/config/IMAGE_PULL_SECRET")
+		imagePullSecret, err := os.ReadFile("./etc/config/LISTENER_IMAGE_PULL_SECRET")
 		if err != nil {
-			setupLog.Error(err, "unable to read IMAGE_PULL_SECRET")
+			setupLog.Error(err, "unable to read LISTENER_IMAGE_PULL_SECRET")
 			os.Exit(1)
 		}
 		config.ImagePullSecret = string(imagePullSecret)
 	}
 
-	if kafkaBrokers := os.Getenv("KAFKA_BROKERS"); kafkaBrokers != "" {
+	if kafkaBrokers := os.Getenv("KAFKA_BOOTSTRAP_SERVERS"); kafkaBrokers != "" {
 		config.KafkaBrokers = kafkaBrokers
 	} else {
-		kafkaBrokers, err := os.ReadFile("./etc/config/KAFKA_BROKERS")
+		kafkaBrokers, err := os.ReadFile("./etc/config/KAFKA_BOOTSTRAP_SERVERS")
 		if err != nil {
-			setupLog.Error(err, "unable to read KAFKA_BROKERS")
+			setupLog.Error(err, "unable to read KAFKA_BOOTSTRAP_SERVERS")
 			os.Exit(1)
 		}
 		config.KafkaBrokers = string(kafkaBrokers)
 	}
 
-	if kafkaTopic := os.Getenv("KAFKA_TOPIC"); kafkaTopic != "" {
+	if kafkaTopic := os.Getenv("KAFKA_PROCESSOR_TOPIC"); kafkaTopic != "" {
 		config.KafkaTopic = kafkaTopic
 	} else {
-		kafkaTopic, err := os.ReadFile("./etc/config/KAFKA_TOPIC")
+		kafkaTopic, err := os.ReadFile("./etc/config/KAFKA_PROCESSOR_TOPIC")
 		if err != nil {
-			setupLog.Error(err, "unable to read KAFKA_TOPIC")
+			setupLog.Error(err, "unable to read KAFKA_PROCESSOR_TOPIC")
 			os.Exit(1)
 		}
 		config.KafkaTopic = string(kafkaTopic)
