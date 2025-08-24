@@ -3,9 +3,37 @@ version: '3'
 dotenv: [ ".env" ]
 
 tasks:
-  run:
+  run-collector:
     cmds:
-    - ./target/debug/rust_listener
+    - ./target/debug/iot-collector
+
+  run-processor:
+    cmds:
+    - ./target/debug/iot-processor
+
+  build-collector:
+    cmds:
+    - cargo build --bin iot-collector
+
+  build-processor:
+    cmds:
+    - cargo build --bin iot-processor
+
+  build-docker-collector:
+    cmds:
+    - docker build -f Dockerfile.iot-collector -t iot-collector .
+
+  build-docker-processor:
+    cmds:
+    - docker build -f Dockerfile.iot-processor -t iot-processor .
+
+  run-docker-collector:
+    cmds:
+    - docker run --env-file .env iot-collector
+
+  run-docker-processor:
+    cmds:
+    - docker run --env-file .env iot-processor
 
   coverage-html:
     cmds:

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile-upstream:master
-FROM --platform=$BUILDPLATFORM rust:1.86-slim AS build
+FROM --platform=$BUILDPLATFORM rust:1.88-slim AS base
 
 WORKDIR /usr/src
 
@@ -8,35 +8,44 @@ ARG BUILDPLATFORM
 ARG DEBIAN_FRONTEND=noninteractive
 
 # Using musl to ensure the binary is statically linked
-# String replacement for target platform: linux/arm64 -> aarch64-unknown-linux-musl
 ENV TARGET=${TARGETPLATFORM//linux\/arm64/aarch64-unknown-linux-musl}
-# Further string replacement for target platform: linux/amd64 -> x86_64-unknown-linux-musl
 ENV TARGET=${TARGET//linux\/amd64/x86_64-unknown-linux-musl}
 
 # Dependencies for cross-compilation
-RUN apt-get update && apt-get install -y build-essential cmake musl-tools curl gcc-aarch64-linux-gnu libssl-dev
+RUN apt-get update && apt-get install -y \
+    build-essential cmake musl-tools curl \
+    gcc-aarch64-linux-gnu libssl-dev pkg-config
 
 # Add the target to the rustup toolchain
 RUN rustup target add $TARGET
 
-RUN USER=root cargo new rust_listener
-
-WORKDIR /usr/src/rust_listener
+RUN USER=root cargo new app
+WORKDIR /usr/src/app
 
 COPY Cargo.toml Cargo.lock ./
 
-# Defined environment variables for rust compilation: x86_64-unknown-linux-musl -> rust-lld, aarch64-unknown-linux-musl -> aarch64-linux-gnu-gcc
+# Defined environment variables for rust compilation
 ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc
 
 COPY src ./src
 
-RUN cargo install --target $TARGET --path .
+# --- Build collector binary ---
+FROM base AS collector-build
+RUN cargo install --target $TARGET --bin iot-collector --path .
 
-FROM scratch
+# --- Build processor binary ---
+FROM base AS processor-build
+RUN cargo install --target $TARGET --bin iot-processor --path .
 
-COPY --from=build /usr/local/cargo/bin/rust_listener .
-# Copy SSL certificates for local issuer verification
-COPY --from=build /etc/ssl /etc/ssl
+# --- Collector runtime image ---
+FROM scratch AS collector
+COPY --from=collector-build /usr/local/cargo/bin/iot-collector /iot-collector
+COPY --from=collector-build /etc/ssl /etc/ssl
+CMD ["/iot-collector"]
 
-CMD ["./rust_listener"]
+# --- Processor runtime image ---
+FROM scratch AS processor
+COPY --from=processor-build /usr/local/cargo/bin/iot-processor /iot-processor
+COPY --from=processor-build /etc/ssl /etc/ssl
+CMD ["/iot-processor"]
