@@ -5,7 +5,7 @@ use petgraph::graph::NodeIndex;
 use sea_orm::{ColumnTrait as _, DatabaseConnection, EntityTrait as _, QueryFilter as _};
 use tokio::{sync::mpsc::UnboundedSender, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{error, info};
 
 use crate::{
     entities, nodes::datalake::ThreadSafeReadingStore, sources::traits::SubscriptionResult,

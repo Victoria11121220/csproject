@@ -8,7 +8,7 @@ use crate::{
 };
 use sea_orm::{sea_query::OnConflict, DbErr, EntityTrait, Set, TransactionTrait};
 use serde::{Deserialize, Serialize};
-use tracing::warn;
+use tracing::{warn, error};
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub struct IoTReading {
