@@ -61,6 +61,7 @@ impl<'de> Deserialize<'de> for SourceNode {
                 .map_err(de::Error::custom)?,
             Source::Mqtt(_) => serde_json::from_value(raw.config).map(SourceConfig::Mqtt).map_err(de::Error::custom)?,
             Source::Kafka(_) => serde_json::from_value(raw.config).map(SourceConfig::Kafka).map_err(de::Error::custom)?,
+            Source::Http(_) => serde_json::from_value(raw.config).map(SourceConfig::Http).map_err(de::Error::custom)?,
         };
 
         Ok(SourceNode { source: raw.source, config })

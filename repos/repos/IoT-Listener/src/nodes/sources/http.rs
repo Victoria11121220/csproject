@@ -5,3 +5,9 @@ use serde::Deserialize;
 pub struct HTTPSourceConfig {
     interval: u64,
 }
+
+impl HTTPSourceConfig {
+    pub fn interval(&self) -> u64 {
+        self.interval
+    }
+}
