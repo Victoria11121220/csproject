@@ -121,12 +121,12 @@ impl StoreReading for IoTReading {
         }
         // entities::prelude::Reading::insert(result)
         //     .on_conflict(
-        //         // 1. 指定冲突的判断依据：必须和表定义的主键或唯一约束完全匹配
+        //         // 1. Specify the basis for conflict judgment: must fully match the primary key or unique constraint defined in the table
         //         OnConflict::columns([
         //             entities::reading::Column::SensorId,
         //             entities::reading::Column::Timestamp,
         //         ])
-        //         // 2. 指定冲突发生时要做的操作：更新指定的列
+        //         // 2. Specify what to do when a conflict occurs: Update the specified column
         //         .update_columns([
         //             entities::reading::Column::RawValue,
         //             entities::reading::Column::Value,

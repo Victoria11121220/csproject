@@ -1,3 +1,4 @@
+# 文件名：docker-compose.yml
 version: '3.8'
 
 services:
@@ -7,28 +8,28 @@ services:
     networks:
       - kafka-net
     ports:
-      # 9092 is used to connect from your computer (host)
+      # 9092 用于从你的电脑（宿主机）连接
       - "9092:9092"
-      # 29092 for internal connections between Docker containers
+      # 29092 用于 Docker 容器之间内部连接
       - "29092:29092"
     environment:
-      # KRaft Mode Configuration
+      # KRaft 模式配置
       KAFKA_PROCESS_ROLES: "broker,controller"
       KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
       KAFKA_BROKER_ID: 1
-      # Let Kafka automatically generate CLUSTER_ID and persist it to the volume
+      # 让 Kafka 自动生成 CLUSTER_ID 并持久化到 volume
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
 
-      # --- Listener Configuration (Revised) ---
-      # 1. Bind to 0.0.0.0 for the CONTROLLER listener
+      # --- 监听器配置 (修正版) ---
+      # 1. 为 CONTROLLER 监听器绑定到 0.0.0.0
       KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,INTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093"
       KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://localhost:9092,INTERNAL://kafka:29092"
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT"
       KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
-      # 2. [Key Fix] Explicitly specify which listener is used for controller communication
+      # 2. 【关键修正】明确指定哪个监听器用于控制器通信
       KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
 
-      # Other configurations
+      # 其他配置
       KAFKA_NUM_PARTITIONS: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
@@ -36,19 +37,19 @@ services:
     volumes:
       - kafka_data:/var/lib/kafka/data
 
-  kafka-ui:
-    image: provectuslabs/kafka-ui:latest
-    container_name: kafka-ui
-    networks:
-      - kafka-net
-    ports:
-      - "8080:8080"
-    depends_on:
-      - kafka
-    environment:
-      KAFKA_CLUSTERS_0_NAME: "local-kafka"
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:29092"
-      DYNAMIC_CONFIG_ENABLED: "true"
+  # kafka-ui:
+  #   image: provectuslabs/kafka-ui:latest
+  #   container_name: kafka-ui
+  #   networks:
+  #     - kafka-net
+  #   ports:
+  #     - "8080:8080"
+  #   depends_on:
+  #     - kafka
+  #   environment:
+  #     KAFKA_CLUSTERS_0_NAME: "local-kafka"
+  #     KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:29092"
+  #     DYNAMIC_CONFIG_ENABLED: "true"
 
 networks:
   kafka-net:
