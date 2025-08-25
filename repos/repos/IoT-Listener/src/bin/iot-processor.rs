@@ -10,22 +10,16 @@ use rust_listener::{
     graph::{build_graph::read_graph, types::GraphPayload},
     readings::StoreReading,
     utils::error::upload_errors,
+    KafkaTrigger,
 };
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::{
     signal,
     sync::mpsc::{unbounded_channel, UnboundedReceiver},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
-
-#[derive(Serialize, Deserialize, Debug)]
-struct KafkaTrigger {
-    index: usize,
-    payload: GraphPayload,
-}
 
 fn setup_kafka_consumer(
     cancellation_token: &CancellationToken,
@@ -49,7 +43,7 @@ fn setup_kafka_consumer(
         .set("bootstrap.servers", &bootstrap_servers)
         .set("group.id", &group_id)
         .set("enable.auto.commit", "true")
-        .set("auto.offset.reset", "latest")
+        .set("auto.offset.reset", "earliest")
         .create()
         .expect("Failed to create Kafka consumer");
 
@@ -68,24 +62,41 @@ fn setup_kafka_consumer(
                      }
                      _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
                          if let Some(Ok(message)) = consumer.poll(tokio::time::Duration::from_millis(100)) {
-                             if let Some(Ok(payload)) = message.payload_view::<str>() {
-                                 let value: Result<Vec<KafkaTrigger>, _> = serde_json::from_str(payload);
-                                 match value {
-                                     Ok(kafka_triggers) => {
-                                         let triggers: Vec<(NodeIndex, GraphPayload)> = kafka_triggers
-                                             .into_iter()
-                                             .map(|kt| (NodeIndex::new(kt.index), kt.payload))
-                                             .collect();
-                                         if let Err(e) = tx.send(triggers) {
-                                             error!("Failed to send message to transmitter: {:?}", e);
-                                         }
-                                     }
-                                     Err(e) => {
-                                         error!("Failed to parse Kafka message as JSON array of KafkaTrigger: {}",
-            e);
-                                     }
-                                 }
-                             }
+                             if let Some(payload) = message.payload() {
+                                // 记录原始payload的长度
+                                info!("Received payload with length: {}", payload.len());
+                                
+                                // 尝试将其转换为字符串
+                                match std::str::from_utf8(payload) {
+                                    Ok(payload_str) => {
+                                        info!("payload: {}", payload_str);
+                                        
+                                        // 尝试解析为JSON
+                                        let value: Result<Vec<KafkaTrigger>, _> = serde_json::from_str(payload_str);
+                                        match value {
+                                            Ok(kafka_triggers) => {
+                                                info!("Successfully parsed {} KafkaTriggers", kafka_triggers.len());
+                                                let triggers: Vec<(NodeIndex, GraphPayload)> = kafka_triggers
+                                                    .into_iter()
+                                                    .map(|kt| (NodeIndex::new(kt.index), kt.payload))
+                                                    .collect();
+                                                if let Err(e) = tx.send(triggers) {
+                                                    error!("Failed to send message to transmitter: {:?}", e);
+                                                }
+                                            }
+                                            Err(e) => {
+                                                error!("Failed to parse Kafka message as JSON array of KafkaTrigger: {}", e);
+                                                error!("Payload that failed to parse: {}", payload_str);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to convert payload to UTF-8 string: {}", e);
+                                    }
+                                }
+                            } else {
+                                info!("Received message with no payload");
+                            }
                          }
                      }
                  }
@@ -122,15 +133,19 @@ async fn main() -> Result<()> {
                 },
                 Some(triggers) = kafka_receiver.recv() => {
                     info!("Received {} triggers from Kafka", triggers.len());
-                    let (readings, _, node_errors) = graph.backpropagate_with_data(triggers).await;
-
-                    for reading in readings {
-                        if let Err(e) = reading.store(&store_db, flow_id).await {
-                            error!("Failed to store reading: {}; {:?}", e, reading);
+                    if triggers.is_empty() {
+                        warn!("Received empty triggers list from Kafka");
+                    } else {
+                        let (readings, _, node_errors) = graph.backpropagate_with_data(triggers).await;
+                        info!("Generated {} readings from triggers", readings.len());
+                        for reading in readings {
+                            if let Err(e) = reading.store(&store_db, flow_id).await {
+                                error!("Failed to store reading: {}; {:?}", e, reading);
+                            }
                         }
-                    }
-                    if let Err(e) = upload_errors(&node_errors, &flow_id, &graph, &store_db).await {
-                        error!("Failed to upload errors: {}", e);
+                        if let Err(e) = upload_errors(&node_errors, &flow_id, &graph, &store_db).await {
+                            error!("Failed to upload errors: {}", e);
+                        }
                     }
                 }
             }

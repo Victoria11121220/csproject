@@ -3,14 +3,14 @@ use super::{
     types::{GraphPayload, GraphPayloadCollections, GraphPayloadMixed, NodeData},
     utils::normalization::normalize_inputs,
 };
-use crate::nodes::NodeType;
+use crate::nodes::{sources::SourceNode, NodeType};
+use crate::sources::traits::async_trait::AsyncSource;
 use serde::{self, Deserialize, Deserializer};
 use std::{
     collections::HashSet,
     fmt::{self, Debug},
     ops::{Deref, DerefMut},
 };
-use crate::sources::traits::async_trait::AsyncSource;
 /// Errors that can occur in the nodes
 #[derive(Debug, Clone)]
 pub enum NodeError {
@@ -136,6 +136,13 @@ impl Node {
         &self.id
     }
 
+    pub fn as_source_node(&self) -> Option<&SourceNode> {
+        match &self.concrete_node {
+            NodeType::Source(source) => Some(source),
+            _ => None,
+        }
+    }
+
     /// Returns the associated concrete node type
     pub fn concrete_node(&self) -> &NodeType {
         &self.concrete_node
@@ -146,25 +153,28 @@ impl Node {
     }
 
     pub fn get_data(&self) -> Option<NodeResult> {
-        match &self.concrete_node {
-            NodeType::Source(source_node) => {
-                match source_node.source.get() {
-                    Ok(node_data) => {
-                        let payload = match node_data {
-                            NodeData::Object(o) => {
-                                GraphPayload::Objects([("source".to_string(), o)].into())
-                            }
-                            NodeData::Collection(c) => {
-                                GraphPayload::Collections([("source".to_string(), c)].into())
-                            }
-                        };
-                        Some(Ok(payload))
-                    }
-                    Err(e) => Some(Err(NodeError::SourceError(e.to_string()))),
-                }
-            }
-            _ => self.internal_state.clone(),
+        if self.internal_state.is_some() {
+            return self.internal_state.clone();
         }
+
+        if let NodeType::Source(source_node) = &self.concrete_node {
+            return match source_node.source.get() {
+                Ok(node_data) => {
+                    let payload = match node_data {
+                        NodeData::Object(o) => {
+                            GraphPayload::Objects([("source".to_string(), o)].into())
+                        }
+                        NodeData::Collection(c) => {
+                            GraphPayload::Collections([("source".to_string(), c)].into())
+                        }
+                    };
+                    Some(Ok(payload))
+                }
+                Err(e) => Some(Err(NodeError::SourceError(e.to_string()))),
+            };
+        }
+
+        None
     }
 
     /// Update the node's internal state by computing the output on the collection payload input.

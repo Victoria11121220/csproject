@@ -22,7 +22,7 @@ async fn main() -> Result<()> {
 
     dotenv::dotenv().ok();
 
-    let (flow_id, mut graph) = match read_graph() {
+    let (flow_id, graph) = match read_graph() {
         Ok(res) => res,
         Err(e) => {
             error!("Failed to read flow: {}", e);
@@ -85,6 +85,7 @@ async fn main() -> Result<()> {
             }
 
             if !kafka_triggers.is_empty() {
+                info!("Sending {} KafkaTriggers to Kafka", kafka_triggers.len());
                 let payload_str = match serde_json::to_string(&kafka_triggers) {
                     Ok(p) => p,
                     Err(e) => {
@@ -92,11 +93,15 @@ async fn main() -> Result<()> {
                         continue;
                     }
                 };
+                info!("Serialized payload: {}", payload_str);
                 let topic = std::env::var("KAFKA_PROCESSOR_TOPIC")
                     .unwrap_or_else(|_| "iot-triggers".to_string());
+                info!("Sending to topic: {}", topic);
                 if let Err(e) = producer.send(BaseRecord::to(&topic).key("").payload(&payload_str))
                 {
                     error!("Failed to send message to Kafka: {:?}", e);
+                } else {
+                    info!("Successfully sent message to Kafka");
                 }
             }
 

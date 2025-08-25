@@ -1,4 +1,9 @@
-use crate::readings::Readings;
+use crate::{
+    graph::types::NodeData,
+    nodes::sources::SourceNode,
+    readings::Readings,
+    sources::{traits::async_trait::AsyncSource, Source},
+};
 use async_recursion::async_recursion;
 use concrete_node::ConcreteNode;
 use edge::Edge;
@@ -12,6 +17,7 @@ use std::{
     ops::Deref,
 };
 use tokio::sync::RwLock;
+use tracing::{error, info};
 use types::GraphPayload;
 use utils::{
     payload_utils::{get_payload_based_on_type, update_result_type, GraphPayloadType},
@@ -60,25 +66,36 @@ impl RwLockGraph {
         let mut graph = self.write().await;
 
         let trigger_indices: Vec<NodeIndex> = triggers.iter().map(|(i, _)| *i).collect();
-
-        for (node_index, payload) in triggers {
-            graph[node_index].update(payload).await;
-        }
-
         let affected_nodes = get_affected_nodes(trigger_indices, &graph);
+
+        affected_nodes
+            .iter()
+            .for_each(|node_index| graph[*node_index].clear());
+
         let mut requires_clear = HashSet::new();
         for node in self.require_backprop.iter() {
             let affected = get_affected_nodes([*node].to_vec(), &graph);
             requires_clear.extend(affected);
         }
-
-        affected_nodes
-            .iter()
-            .for_each(|node_index| graph[*node_index].clear());
         requires_clear
             .iter()
             .for_each(|node_index| graph[*node_index].clear());
 
+        for (node_index, payload) in triggers {
+            info!("Payload: {:?}", payload);
+            if let Some(source_node) = graph[node_index].as_source_node() {
+                if let Err(e) = update_source_with_payload(source_node, payload.clone()) {
+                    error!("{e}");
+                }
+            }
+
+            graph[node_index].update(payload).await;
+            // let node_data = convert_payload_to_node_data(payload)?;
+            // update_source_with_payload(&graph[node_index], payload);
+            // graph[node_index].update(payload).await;
+        }
+        // info!("Payload: {}",)
+        // graph[node_index]
         let affected_sinks = self.sinks.intersection(&affected_nodes);
         for sink in affected_sinks {
             let _ = internal_backpropagation(&mut graph, *sink).await;
@@ -91,11 +108,14 @@ impl RwLockGraph {
         let affected_output_generators = self.output_generators.intersection(&affected_nodes);
         for output_node_index in affected_output_generators {
             let node = &graph[*output_node_index];
-            match node.get_data() {
+            let node_data = node.get_data();
+
+            match node_data {
                 None => {}
                 Some(node_data) => match node_data {
                     NodeResult::Err(e) => errors.push((*output_node_index, e.clone())),
                     NodeResult::Ok(payload) => {
+                        info!("payload: {:?}", payload);
                         if node.generates_reading() {
                             let readings_attempt = match payload {
                                 GraphPayload::Objects(objects) => node
@@ -381,6 +401,81 @@ mod tests {
                 assert_eq!(*object, serde_json::json!("value"));
             }
             _ => panic!("Expected objects"),
+        }
+    }
+}
+
+pub fn update_source_with_payload(
+    source_node: &SourceNode,
+    payload: GraphPayload,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // 将GraphPayload转换为NodeData
+    let node_data = convert_payload_to_node_data(payload)?;
+
+    update_source_data(&source_node.source, node_data)?;
+
+    Ok(())
+}
+
+fn convert_payload_to_node_data(
+    payload: GraphPayload,
+) -> Result<NodeData, Box<dyn std::error::Error>> {
+    match payload {
+        GraphPayload::Objects(objects) => {
+            let json_object =
+                serde_json::Value::Object(objects.into_iter().map(|(k, v)| (k, v)).collect());
+            Ok(NodeData::Object(json_object))
+        }
+        GraphPayload::Collections(collections) => {
+            let mut combined_collection = Vec::new();
+            for (_, collection) in collections {
+                combined_collection.extend(collection);
+            }
+            Ok(NodeData::Collection(combined_collection))
+        }
+        GraphPayload::Mixed(mixed) => {
+            if let Some((_, node_data)) = mixed.into_iter().next() {
+                Ok(node_data)
+            } else {
+                Ok(NodeData::Object(serde_json::Value::Null))
+            }
+        }
+    }
+}
+
+fn update_source_data(source: &Source, data: NodeData) -> Result<(), Box<dyn std::error::Error>> {
+    match source {
+        Source::Http(http_source) => {
+            let data_lock = http_source.get_lock();
+            let mut data_guard = data_lock
+                .write()
+                .map_err(|_| "Failed to acquire write lock")?;
+            *data_guard = data;
+            Ok(())
+        }
+        Source::Mqtt(mqtt_source) => {
+            let data_lock = mqtt_source.get_lock();
+            let mut data_guard = data_lock
+                .write()
+                .map_err(|_| "Failed to acquire write lock")?;
+            *data_guard = data;
+            Ok(())
+        }
+        Source::Kafka(kafka_source) => {
+            let data_lock = kafka_source.get_lock();
+            let mut data_guard = data_lock
+                .write()
+                .map_err(|_| "Failed to acquire write lock")?;
+            *data_guard = data;
+            Ok(())
+        }
+        Source::MASMonitor(mas_source) => {
+            let data_lock = mas_source.get_lock();
+            let mut data_guard = data_lock
+                .write()
+                .map_err(|_| "Failed to acquire write lock")?;
+            *data_guard = data;
+            Ok(())
         }
     }
 }

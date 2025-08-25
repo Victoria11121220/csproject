@@ -21,7 +21,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"time"
+	"os"
+	"sync"
 
 	_ "github.com/lib/pq" // PostgreSQL driver
 	appsv1 "k8s.io/api/apps/v1"
@@ -32,7 +33,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	iotv1alpha1 "visualiseinfo.com/m/api/v1alpha1"
 )
@@ -42,7 +45,6 @@ const (
 	ProcessorImageName = "iot-processor"
 	ManagedByLabel     = "app.kubernetes.io/managed-by"
 	FlowIdLabel        = "iot.visualiseinfo.com/flow-id"
-	PollingInterval    = 30 * time.Second
 )
 
 // IoTFlow represents the structure of a flow fetched from the database
@@ -63,92 +65,13 @@ type IoTListenerRequestReconciler struct {
 	KafkaBrokers    string
 	KafkaTopic      string
 	DB              *sql.DB
+	initialized     bool       // Add this field to track whether the initial sync has occurred
+	mutex           sync.Mutex // Protecting initialized fields
 }
 
 //+kubebuilder:rbac:groups=iot.visualiseinfo.com,resources=iotlistenerrequests,verbs=get;list;watch
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
-
-func (r *IoTListenerRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := log.FromContext(ctx)
-
-	// --- Database Polling Logic ---
-	if r.DB == nil {
-		log.Info("Initializing database connection")
-		db, err := sql.Open("postgres", r.DatabaseUri)
-		if err != nil {
-			log.Error(err, "Failed to connect to database")
-			return ctrl.Result{}, err // Return error to retry connection
-		}
-		r.DB = db
-	}
-
-	rows, err := r.DB.QueryContext(ctx, "SELECT id, nodes, edges FROM iot_flow")
-	if err != nil {
-		log.Error(err, "Failed to query iot_flow table")
-		return ctrl.Result{RequeueAfter: PollingInterval}, err
-	}
-	defer rows.Close()
-
-	dbFlows := make(map[string]IoTFlow)
-	for rows.Next() {
-		var flow IoTFlow
-		if err := rows.Scan(&flow.ID, &flow.Nodes, &flow.Edges); err != nil {
-			log.Error(err, "Failed to scan flow row")
-			continue
-		}
-		flowIDStr := fmt.Sprintf("%d", flow.ID)
-		dbFlows[flowIDStr] = flow
-	}
-
-	log.Info(fmt.Sprintf("Found %d flows in database", len(dbFlows)))
-
-	// --- Reconciliation Logic ---
-	for flowID, flow := range dbFlows {
-		log.Info("Reconciling flow", "flowID", flowID)
-
-		sourcesConfig, err := extractSourcesFromNodes(flow.Nodes)
-		if err != nil {
-			log.Error(err, "Failed to extract sources from nodes JSON", "flowID", flowID)
-			continue
-		}
-
-		// Reconcile ConfigMap for Collector
-		cmCollector := r.defineCollectorConfigMap(flowID, sourcesConfig)
-		if err := r.reconcileConfigMap(ctx, cmCollector); err != nil {
-			log.Error(err, "Failed to reconcile collector configmap", "flowID", flowID)
-			continue
-		}
-
-		// Reconcile ConfigMap for Processor
-		cmProcessor := r.defineProcessorConfigMap(flowID, flow.Nodes, flow.Edges)
-		if err := r.reconcileConfigMap(ctx, cmProcessor); err != nil {
-			log.Error(err, "Failed to reconcile processor configmap", "flowID", flowID)
-			continue
-		}
-
-		// Reconcile Deployment for Collector
-		deplCollector := r.defineCollectorDeployment(flowID, cmCollector.Name)
-		if err := r.reconcileDeployment(ctx, deplCollector); err != nil {
-			log.Error(err, "Failed to reconcile collector deployment", "flowID", flowID)
-			continue
-		}
-
-		// Reconcile Deployment for Processor
-		deplProcessor := r.defineProcessorDeployment(flowID, cmProcessor.Name)
-		if err := r.reconcileDeployment(ctx, deplProcessor); err != nil {
-			log.Error(err, "Failed to reconcile processor deployment", "flowID", flowID)
-			continue
-		}
-	}
-
-	// --- Cleanup Logic ---
-	if err := r.cleanupOrphanedResources(ctx, dbFlows); err != nil {
-		log.Error(err, "Failed to cleanup orphaned resources")
-	}
-
-	return ctrl.Result{RequeueAfter: PollingInterval}, nil
-}
 
 // extractSourcesFromNodes parses the nodes JSON and returns a new JSON array of source nodes
 func extractSourcesFromNodes(nodesJSON string) (string, error) {
@@ -203,8 +126,13 @@ func (r *IoTListenerRequestReconciler) reconcileDeployment(ctx context.Context, 
 		return err
 	}
 	// Naive update, a real implementation should be smarter
-	found.Spec = depl.Spec
-	return r.Update(ctx, found)
+	// Only update if the image is different to avoid endless update loops
+	if found.Spec.Template.Spec.Containers[0].Image != depl.Spec.Template.Spec.Containers[0].Image {
+		found.Spec = depl.Spec
+		log.FromContext(ctx).Info("Updating Deployment", "Deployment.Name", depl.Name)
+		return r.Update(ctx, found)
+	}
+	return nil
 }
 
 func (r *IoTListenerRequestReconciler) cleanupOrphanedResources(ctx context.Context, dbFlows map[string]IoTFlow) error {
@@ -247,16 +175,18 @@ func (r *IoTListenerRequestReconciler) cleanupOrphanedResources(ctx context.Cont
 
 // --- Resource Definitions ---
 
-func (r *IoTListenerRequestReconciler) defineCollectorConfigMap(flowID string, sourcesConfig string) *corev1.ConfigMap {
+func (r *IoTListenerRequestReconciler) defineCollectorConfigMap(flowID string, sourcesConfig string, nodes string, edges string) *corev1.ConfigMap {
 	name := fmt.Sprintf("collector-config-%s", flowID)
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: "default", // Or from a config
+			Namespace: r.getNamespace(), // Or from a config
 			Labels:    map[string]string{ManagedByLabel: "iot-operator", FlowIdLabel: flowID},
 		},
 		Data: map[string]string{
 			"SOURCES": sourcesConfig,
+			"nodes":   nodes,
+			"edges":   edges,
 		},
 	}
 }
@@ -267,7 +197,7 @@ func (r *IoTListenerRequestReconciler) defineProcessorConfigMap(flowID string, n
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: "default",
+			Namespace: r.getNamespace(),
 			Labels:    map[string]string{ManagedByLabel: "iot-operator", FlowIdLabel: flowID},
 		},
 		Data: map[string]string{
@@ -283,7 +213,7 @@ func (r *IoTListenerRequestReconciler) defineCollectorDeployment(flowID string, 
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: "default",
+			Namespace: r.getNamespace(),
 			Labels:    map[string]string{ManagedByLabel: "iot-operator", FlowIdLabel: flowID},
 		},
 		Spec: appsv1.DeploymentSpec{
@@ -315,7 +245,7 @@ func (r *IoTListenerRequestReconciler) defineProcessorDeployment(flowID string, 
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: "default",
+			Namespace: r.getNamespace(),
 			Labels:    map[string]string{ManagedByLabel: "iot-operator", FlowIdLabel: flowID},
 		},
 		Spec: appsv1.DeploymentSpec{
@@ -325,9 +255,10 @@ func (r *IoTListenerRequestReconciler) defineProcessorDeployment(flowID string, 
 				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": name}},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
-						Name:    ProcessorImageName,
-						Image:   r.ProcessorImage,
-						EnvFrom: []corev1.EnvFromSource{{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: configMapName}}}},
+						Name:            ProcessorImageName,
+						Image:           r.ProcessorImage,
+						ImagePullPolicy: corev1.PullIfNotPresent,
+						EnvFrom:         []corev1.EnvFromSource{{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: configMapName}}}},
 						Env: []corev1.EnvVar{
 							{Name: "KAFKA_BOOTSTRAP_SERVERS", Value: r.KafkaBrokers},
 							{Name: "KAFKA_PROCESSOR_TOPIC", Value: r.KafkaTopic},
@@ -342,12 +273,237 @@ func (r *IoTListenerRequestReconciler) defineProcessorDeployment(flowID string, 
 	}
 }
 
+func (r *IoTListenerRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	log := log.FromContext(ctx)
+
+	// Check if the request is from our trigger ConfigMap
+	if req.NamespacedName.Name == "iot-flow-changes" {
+		// Get event information from ConfigMap
+		cm := &corev1.ConfigMap{}
+		if err := r.Get(ctx, req.NamespacedName, cm); err != nil {
+			if !errors.IsNotFound(err) {
+				log.Error(err, "Failed to get trigger ConfigMap")
+				return ctrl.Result{}, err
+			}
+			// ConfigMap does not exist, it may have been deleted, no processing
+			return ctrl.Result{}, nil
+		}
+
+		// Check if it is the initial synchronization event
+		if cm.Data != nil {
+			if lastEvent, ok := cm.Data["lastEvent"]; ok && len(lastEvent) > 0 {
+				log.Info("Processing event", "event", lastEvent)
+				// Check whether it is an initial synchronization event
+				if lastEvent == "-1:INITIAL_SYNC:" {
+					log.Info("Processing initial sync")
+					return r.reconcileInitialFlows(ctx)
+				}
+			}
+		}
+	}
+
+	// Query database for all flows
+	rows, err := r.DB.QueryContext(ctx, "SELECT id, nodes, edges FROM iot_flow")
+	if err != nil {
+		log.Error(err, "Failed to query iot_flow table")
+		return ctrl.Result{}, err
+	}
+	defer rows.Close()
+
+	dbFlows := make(map[string]IoTFlow)
+	for rows.Next() {
+		var flow IoTFlow
+		if err := rows.Scan(&flow.ID, &flow.Nodes, &flow.Edges); err != nil {
+			log.Error(err, "Failed to scan flow row")
+			continue
+		}
+		flowIDStr := fmt.Sprintf("%d", flow.ID)
+		dbFlows[flowIDStr] = flow
+	}
+
+	log.Info(fmt.Sprintf("Found %d flows in database", len(dbFlows)))
+
+	// --- Reconciliation Logic ---
+	for flowID, flow := range dbFlows {
+		log.Info("Reconciling flow", "flowID", flowID)
+
+		sourcesConfig, err := extractSourcesFromNodes(flow.Nodes)
+		if err != nil {
+			log.Error(err, "Failed to extract sources from nodes JSON", "flowID", flowID)
+			continue
+		}
+
+		// Reconcile ConfigMap for Collector
+		cmCollector := r.defineCollectorConfigMap(flowID, sourcesConfig, flow.Nodes, flow.Edges)
+		if err := r.reconcileConfigMap(ctx, cmCollector); err != nil {
+			log.Error(err, "Failed to reconcile collector configmap", "flowID", flowID)
+			continue
+		}
+
+		// Reconcile ConfigMap for Processor
+		cmProcessor := r.defineProcessorConfigMap(flowID, flow.Nodes, flow.Edges)
+		if err := r.reconcileConfigMap(ctx, cmProcessor); err != nil {
+			log.Error(err, "Failed to reconcile processor configmap", "flowID", flowID)
+			continue
+		}
+
+		// Reconcile Deployment for Collector
+		deplCollector := r.defineCollectorDeployment(flowID, cmCollector.Name)
+		if err := r.reconcileDeployment(ctx, deplCollector); err != nil {
+			log.Error(err, "Failed to reconcile collector deployment", "flowID", flowID)
+			continue
+		}
+
+		// Reconcile Deployment for Processor
+		deplProcessor := r.defineProcessorDeployment(flowID, cmProcessor.Name)
+		if err := r.reconcileDeployment(ctx, deplProcessor); err != nil {
+			log.Error(err, "Failed to reconcile processor deployment", "flowID", flowID)
+			continue
+		}
+	}
+
+	// --- Cleanup Logic ---
+	if err := r.cleanupOrphanedResources(ctx, dbFlows); err != nil {
+		log.Error(err, "Failed to cleanup orphaned resources")
+	}
+
+	// With the new subscription-based approach, we don't need to requeue periodically
+	return ctrl.Result{}, nil
+}
+
+// reconcileInitialFlows handles the initial synchronization and only processes the first 5 records
+func (r *IoTListenerRequestReconciler) reconcileInitialFlows(ctx context.Context) (ctrl.Result, error) {
+	log := log.FromContext(ctx)
+	log.Info("Performing initial sync, processing first 5 flows")
+
+	// Query the first 5 records
+	rows, err := r.DB.QueryContext(ctx, "SELECT id, nodes, edges FROM iot_flow ORDER BY id LIMIT 5")
+	if err != nil {
+		log.Error(err, "Failed to query iot_flow table for initial sync")
+		return ctrl.Result{}, err
+	}
+	defer rows.Close()
+
+	dbFlows := make(map[string]IoTFlow)
+	for rows.Next() {
+		var flow IoTFlow
+		if err := rows.Scan(&flow.ID, &flow.Nodes, &flow.Edges); err != nil {
+			log.Error(err, "Failed to scan flow row during initial sync")
+			continue
+		}
+		flowIDStr := fmt.Sprintf("%d", flow.ID)
+		dbFlows[flowIDStr] = flow
+	}
+
+	log.Info(fmt.Sprintf("Found %d flows for initial sync", len(dbFlows)))
+
+	// --- Reconciliation Logic for initial flows ---
+	for flowID, flow := range dbFlows {
+		log.Info("Reconciling flow during initial sync", "flowID", flowID)
+
+		sourcesConfig, err := extractSourcesFromNodes(flow.Nodes)
+		if err != nil {
+			log.Error(err, "Failed to extract sources from nodes JSON during initial sync", "flowID", flowID)
+			continue
+		}
+
+		// Reconcile ConfigMap for Collector
+		cmCollector := r.defineCollectorConfigMap(flowID, sourcesConfig, flow.Nodes, flow.Edges)
+		if err := r.reconcileConfigMap(ctx, cmCollector); err != nil {
+			log.Error(err, "Failed to reconcile collector configmap during initial sync", "flowID", flowID)
+			continue
+		}
+
+		// Reconcile ConfigMap for Processor
+		cmProcessor := r.defineProcessorConfigMap(flowID, flow.Nodes, flow.Edges)
+		if err := r.reconcileConfigMap(ctx, cmProcessor); err != nil {
+			log.Error(err, "Failed to reconcile processor configmap during initial sync", "flowID", flowID)
+			continue
+		}
+
+		// Reconcile Deployment for Collector
+		deplCollector := r.defineCollectorDeployment(flowID, cmCollector.Name)
+		if err := r.reconcileDeployment(ctx, deplCollector); err != nil {
+			log.Error(err, "Failed to reconcile collector deployment during initial sync", "flowID", flowID)
+			continue
+		}
+
+		// Reconcile Deployment for Processor
+		deplProcessor := r.defineProcessorDeployment(flowID, cmProcessor.Name)
+		if err := r.reconcileDeployment(ctx, deplProcessor); err != nil {
+			log.Error(err, "Failed to reconcile processor deployment during initial sync", "flowID", flowID)
+			continue
+		}
+	}
+
+	// --- Cleanup Logic ---
+	if err := r.cleanupOrphanedResources(ctx, dbFlows); err != nil {
+		log.Error(err, "Failed to cleanup orphaned resources during initial sync")
+	}
+
+	return ctrl.Result{}, nil
+}
+
+// getNamespace gets the namespace, preferably from the environment variable, otherwise use "listener-operator-system"
+func (r *IoTListenerRequestReconciler) getNamespace() string {
+	if namespace := os.Getenv("NAMESPACE"); namespace != "" {
+		return namespace
+	}
+	return "listener-operator-system"
+}
+
+// SetupWithManager sets up the controller with the Manager.
 func (r *IoTListenerRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Initialize database connection
+	if r.DB == nil {
+		log := log.FromContext(context.Background())
+		log.Info("Initializing database connection")
+		db, err := sql.Open("postgres", r.DatabaseUri)
+		if err != nil {
+			log.Error(err, "Failed to connect to database")
+			return err
+		}
+		r.DB = db
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
-		// Watch for changes to primary resource IoTListenerRequest
-		// But the main logic is driven by polling, so this is just to satisfy the builder
 		For(&iotv1alpha1.IoTListenerRequest{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.ConfigMap{}).
+		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.configMapToIoTListenerRequest)).
 		Complete(r)
+}
+
+// configMapToIoTListenerRequest maps ConfigMap updates to IoTListenerRequest reconcile requests
+func (r *IoTListenerRequestReconciler) configMapToIoTListenerRequest(ctx context.Context, obj client.Object) []reconcile.Request {
+	// Only process our specific trigger ConfigMap
+	if labels := obj.GetLabels(); labels != nil {
+		if labels["iot.visualiseinfo.com/type"] == "flow-change-trigger" {
+			// When the trigger ConfigMap is updated, reconcile all IoTListenerRequest resources
+			// In a more sophisticated implementation, we could parse the ConfigMap to determine
+			// which specific flows need to be reconciled
+
+			// List all IoTListenerRequest resources
+			list := &iotv1alpha1.IoTListenerRequestList{}
+			if err := r.List(ctx, list); err != nil {
+				return nil
+			}
+
+			// Create reconcile requests for each IoTListenerRequest
+			requests := make([]reconcile.Request, len(list.Items))
+			for i, item := range list.Items {
+				requests[i] = reconcile.Request{
+					NamespacedName: types.NamespacedName{
+						Name:      item.Name,
+						Namespace: item.Namespace,
+					},
+				}
+			}
+
+			return requests
+		}
+	}
+
+	// For other ConfigMaps, no action is triggered
+	return nil
 }

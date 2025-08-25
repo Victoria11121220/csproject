@@ -1,25 +1,13 @@
-# config/manager/operator-configmap.yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: listener-operator-config
-  namespace: system # 必须和 Deployment 的 namespace 一致
+  namespace: system
 data:
-  # 键名 (key) 将成为文件名
-  # 值 (value) 将成为文件内容
-
   COLLECTOR_IMAGE: "iot-collector:latest"
   PROCESSOR_IMAGE: "iot-processor:latest"
-
-  # 对应 ./etc/config/LISTENER_IMAGE_PULL_POLICY
-  # 可选值: Always, Never, IfNotPresent
-  PROCESSOR_IMAGE_PULL_POLICY: "IfNotPresent"
   COLLECTOR_IMAGE_PULL_POLICY: "IfNotPresent"
-  
-  # 对应 ./etc/config/LISTENER_IMAGE_PULL_SECRET
-  # 这里填写你的镜像拉取凭证的 Secret 名字，如果没有，留空
+  PROCESSOR_IMAGE_PULL_POLICY: "IfNotPresent"
   LISTENER_IMAGE_PULL_SECRET: ""
-
-  # Kafka configuration
   KAFKA_BOOTSTRAP_SERVERS: "localhost:9092"
   KAFKA_PROCESSOR_TOPIC: "iot-triggers"

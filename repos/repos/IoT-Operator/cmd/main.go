@@ -58,6 +58,7 @@ type Config struct {
 	ImagePullSecret string
 	KafkaBrokers    string
 	KafkaTopic      string
+	Namespace       string
 }
 
 // ReadConfig reads the configuration from the mounted config files or environment variables
@@ -118,6 +119,14 @@ func ReadConfig() Config {
 			os.Exit(1)
 		}
 		config.KafkaTopic = string(kafkaTopic)
+	}
+
+	// Read namespace
+	if namespace := os.Getenv("NAMESPACE"); namespace != "" {
+		config.Namespace = namespace
+	} else {
+		// Default to "listener-operator-system" namespace
+		config.Namespace = "listener-operator-system"
 	}
 
 	return config
@@ -200,6 +209,17 @@ func main() {
 		KafkaTopic:      config.KafkaTopic,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "IoTListenerRequest")
+		os.Exit(1)
+	}
+
+	// Add the DatabaseWatcher controller
+	if err = (&controller.DatabaseWatcherReconciler{
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+		DatabaseUri: string(postgresURI),
+		Namespace:   config.Namespace,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "DatabaseWatcher")
 		os.Exit(1)
 	}
 	//+kubebuilder:scaffold:builder
