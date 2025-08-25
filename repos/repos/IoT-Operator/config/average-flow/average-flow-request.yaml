@@ -1,0 +1,14 @@
+apiVersion: iot.visualiseinfo.com/v1alpha1
+kind: IoTListenerRequest
+metadata:
+  name: average-flow-request
+spec:
+  flowID: 1
+  nodes: '[{"id": "datalake-0a68d69c-39d3-4e5e-86cf-2c269bb8b207", "data": {"sensorId": 1}, "type": "datalake",
+     "dragging": false, "measured": {"width": 150, "height": 50}, "position": {"x": 441, "y": 203}, "selected": 
+     false}, {"id": "average-fac93473-b247-4fb1-a3c0-6989f2456010", "type": "average", "dragging": false, 
+     "measured": {"width": 150, "height": 33}, "position": {"x": 895, "y": 360}, "selected": false}]'
+  edges:  '[{"id": 
+     "xy-edge__datalake-0a68d69c-39d3-4e5e-86cf-2c269bb8b207source-average-fac93473-b247-4fb1-a3c0-6989f2456010targe
+     t", "source": "datalake-0a68d69c-39d3-4e5e-86cf-2c269bb8b207", "target": 
+     "average-fac93473-b247-4fb1-a3c0-6989f2456010", "sourceHandle": "source", "targetHandle": "target"}]'
