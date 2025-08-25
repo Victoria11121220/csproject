@@ -1,4 +1,6 @@
-use super::traits::{async_trait::AsyncSource, rest::RestSource, SubscriptionResult, ThreadSafeError};
+use super::traits::{
+    async_trait::AsyncSource, rest::RestSource, SubscriptionResult, ThreadSafeError,
+};
 use crate::{graph::types::NodeData, nodes::sources::SourceConfig};
 use petgraph::graph::NodeIndex;
 use serde::{Deserialize, Serialize};
@@ -11,6 +13,7 @@ pub struct HTTPSource {
     method: String,
     headers: Option<std::collections::HashMap<String, String>>,
     body: Option<serde_json::Value>,
+    interval: u64,
     #[serde(skip)]
     data: Arc<RwLock<NodeData>>,
 }
@@ -21,6 +24,7 @@ impl HTTPSource {
         method: String,
         headers: Option<std::collections::HashMap<String, String>>,
         body: Option<serde_json::Value>,
+        interval: u64,
     ) -> Self {
         Self {
             endpoint,
@@ -28,9 +32,10 @@ impl HTTPSource {
             headers,
             body,
             data: Arc::new(RwLock::new(NodeData::Object(serde_json::Value::Null))),
+            interval,
         }
     }
-    
+
     pub fn endpoint(&self) -> &str {
         &self.endpoint
     }
@@ -39,7 +44,7 @@ impl HTTPSource {
 impl RestSource for HTTPSource {
     fn interval(&self, config: &SourceConfig) -> Result<u64, ThreadSafeError> {
         match config {
-            SourceConfig::Http(config) => Ok(config.interval()),
+            SourceConfig::Http(_) => Ok(self.interval),
             _ => Err("Invalid source config".into()),
         }
     }
@@ -49,25 +54,25 @@ impl RestSource for HTTPSource {
         _config: &SourceConfig,
     ) -> Result<reqwest::Request, Box<dyn std::error::Error>> {
         let client = reqwest::Client::new();
-        
+
         // Parse the HTTP method
         let method: reqwest::Method = self.method.parse()?;
-        
+
         // Build the request
         let mut request_builder = client.request(method, &self.endpoint);
-        
+
         // Add headers if provided
         if let Some(headers) = &self.headers {
             for (key, value) in headers {
                 request_builder = request_builder.header(key, value);
             }
         }
-        
+
         // Add body if provided
         if let Some(body) = &self.body {
             request_builder = request_builder.json(body);
         }
-        
+
         let request = request_builder.build()?;
         Ok(request)
     }

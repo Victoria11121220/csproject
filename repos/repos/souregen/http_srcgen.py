@@ -1,7 +1,7 @@
 # test_server.py
 from flask import Flask, jsonify
 import random
-from datetime import datetime  # 1. Import the datetime module
+from datetime import datetime, timezone # 1. Import the datetime module
 
 app = Flask(__name__)
 
@@ -9,7 +9,7 @@ app = Flask(__name__)
 @app.route('/sensor-data')
 def sensor_data():
     # 2. Get the current UTC time
-    now_utc = datetime.now(datetime.timezone.utc)
+    now_utc = datetime.now(timezone.utc)
 
     # 3. Formatted as an ISO 8601 string and ending with 'Z'
     # .replace(microsecond=0) is to remove milliseconds to make the timestamp neater

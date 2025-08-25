@@ -33,12 +33,11 @@ async fn read_latest_readings(
     Box<dyn std::error::Error>,
 > {
     let to_time = timestamp - chrono::Duration::seconds(3600 as i64);
-    info!("reading {:?} -> {:?}", timestamp, to_time);
     entities::reading::Entity::find()
         .find_also_related(entities::sensor::Entity)
         .filter(entities::reading::Column::SensorId.is_in(sensor_ids))
-        // .filter(entities::reading::Column::Timestamp.gt(timestamp))
-        // .filter(entities::reading::Column::Timestamp.lt(to_time))
+        .filter(entities::reading::Column::Timestamp.gt(timestamp))
+        .filter(entities::reading::Column::Timestamp.lt(to_time))
         .all(database)
         .await
         .map_err(|e| {
@@ -82,7 +81,7 @@ fn poll_and_update_readings(
                     let new_readings = read_latest_readings(&db, sensor_ids.clone(), last_update).await;
                     match new_readings {
                         Ok(readings) => {
-                            info!("Found new readings: {}", readings.len());
+                            // info!("Found new readings: {}", readings.len());
                             // Filter out readings with no sensor
                             let readings = readings
                                 .into_iter()
