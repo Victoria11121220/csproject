@@ -1,8 +1,8 @@
 # listener-operator
-// TODO(user): Add simple overview of use/purpose
+IoT Operator for managing IoT data flows in Kubernetes
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+The IoT Operator is a Kubernetes operator that manages IoT data flows by automatically creating and updating deployments for data collectors and processors based on flow definitions stored in a PostgreSQL database. It watches the database for changes and ensures that the appropriate Kubernetes resources are created or updated accordingly.
 
 ## Getting Started
 
