@@ -39,10 +39,10 @@ spec:
       volumes:
       - name: config-volume
         configMap:
-          name: listener-operator-config # Corresponding to the ConfigMap we created
+          name: listener-operator-config # Corresponding to the ConfigMap created
       - name: secret-volume
         secret:
-          secretName: listener-operator-secrets # Corresponding to the Secret we created
+          secretName: listener-operator-secrets # Corresponding to the Secret created
           
       # Container List
       containers:
