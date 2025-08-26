@@ -409,7 +409,7 @@ pub fn update_source_with_payload(
     source_node: &SourceNode,
     payload: GraphPayload,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // 将GraphPayload转换为NodeData
+    // Convert GraphPayload to NodeData
     let node_data = convert_payload_to_node_data(payload)?;
 
     update_source_data(&source_node.source, node_data)?;
