@@ -6,6 +6,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: postgres-secret
+  namespace: listener-operator-system
 # --- NOTE: There is no 'spec' field ---
 type: Opaque
 stringData:
@@ -18,6 +19,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: postgres-pvc
+  namespace: listener-operator-system
 spec:
   # Access mode: ReadWriteOnce means that this volume can only be read and written by one node at a time
   accessModes:
@@ -35,6 +37,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: postgres-service
+  namespace: listener-operator-system
 spec:
   # Service Type: ClusterIP means this service is only visible within the cluster
   type: ClusterIP
@@ -53,6 +56,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: postgres-deployment
+  namespace: listener-operator-system
 spec:
   replicas: 1
   selector:
@@ -61,7 +65,7 @@ spec:
   template:
     metadata:
       labels:
-        # This label must match the Service selector.
+        # This label must match the Service selector
         app: postgres
     spec:
       containers:
@@ -79,7 +83,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: postgres-secret # Secret Name
-                  key: POSTGRES_PASSWORD # Keys in Secrets
+                  key: POSTGRES_PASSWORD # Secret Key
           # Mount the persistent storage we applied for
           volumeMounts:
             - name: postgres-storage

@@ -275,37 +275,15 @@ func (r *IoTListenerRequestReconciler) defineProcessorDeployment(flowID string, 
 
 func (r *IoTListenerRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
+	log.Info("=== Starting Full Reconciliation Cycle ===", "triggered_by", req.NamespacedName)
 
-	// Check if the request is from our trigger ConfigMap
-	if req.NamespacedName.Name == "iot-flow-changes" {
-		// Get event information from ConfigMap
-		cm := &corev1.ConfigMap{}
-		if err := r.Get(ctx, req.NamespacedName, cm); err != nil {
-			if !errors.IsNotFound(err) {
-				log.Error(err, "Failed to get trigger ConfigMap")
-				return ctrl.Result{}, err
-			}
-			// ConfigMap does not exist, it may have been deleted, no processing
-			return ctrl.Result{}, nil
-		}
+	// Core logic: Regardless of the trigger source, fully synchronize the K8s state with the database
 
-		// Check if it is the initial synchronization event
-		if cm.Data != nil {
-			if lastEvent, ok := cm.Data["lastEvent"]; ok && len(lastEvent) > 0 {
-				log.Info("Processing event", "event", lastEvent)
-				// Check whether it is an initial synchronization event
-				if lastEvent == "-1:INITIAL_SYNC:" {
-					log.Info("Processing initial sync")
-					return r.reconcileInitialFlows(ctx)
-				}
-			}
-		}
-	}
-
-	// Query database for all flows
+	// 1. Get all current Flows from the database
 	rows, err := r.DB.QueryContext(ctx, "SELECT id, nodes, edges FROM iot_flow")
 	if err != nil {
 		log.Error(err, "Failed to query iot_flow table")
+		// Returning an error triggers an exponential backoff retry, which is appropriate for database connection issues.
 		return ctrl.Result{}, err
 	}
 	defer rows.Close()
@@ -314,23 +292,29 @@ func (r *IoTListenerRequestReconciler) Reconcile(ctx context.Context, req ctrl.R
 	for rows.Next() {
 		var flow IoTFlow
 		if err := rows.Scan(&flow.ID, &flow.Nodes, &flow.Edges); err != nil {
-			log.Error(err, "Failed to scan flow row")
+			log.Error(err, "Failed to scan flow row from database")
+			// Continue processing other rows instead of failing the entire reconciliation
 			continue
 		}
 		flowIDStr := fmt.Sprintf("%d", flow.ID)
 		dbFlows[flowIDStr] = flow
 	}
+	// Check if any errors occurred during the scan
+	if err = rows.Err(); err != nil {
+		log.Error(err, "Error occurred during rows iteration")
+		return ctrl.Result{}, err
+	}
 
-	log.Info(fmt.Sprintf("Found %d flows in database", len(dbFlows)))
+	log.Info("Successfully fetched flows from database", "flow_count", len(dbFlows))
 
-	// --- Reconciliation Logic ---
+	// 2. Traverse all Flows in the database and create or update corresponding resources in Kubernetes
 	for flowID, flow := range dbFlows {
-		log.Info("Reconciling flow", "flowID", flowID)
+		log.Info("Reconciling flow from database", "flowID", flowID)
 
 		sourcesConfig, err := extractSourcesFromNodes(flow.Nodes)
 		if err != nil {
-			log.Error(err, "Failed to extract sources from nodes JSON", "flowID", flowID)
-			continue
+			log.Error(err, "Failed to extract sources from nodes JSON, skipping flow", "flowID", flowID)
+			continue // Skip this problematic flow
 		}
 
 		// Reconcile ConfigMap for Collector
@@ -360,89 +344,22 @@ func (r *IoTListenerRequestReconciler) Reconcile(ctx context.Context, req ctrl.R
 			log.Error(err, "Failed to reconcile processor deployment", "flowID", flowID)
 			continue
 		}
+		log.Info("Successfully reconciled all resources for flow", "flowID", flowID)
 	}
 
-	// --- Cleanup Logic ---
+	// 3. Clean up orphan resources that exist in K8s but no longer exist in the database
+	log.Info("Starting cleanup of orphaned resources")
 	if err := r.cleanupOrphanedResources(ctx, dbFlows); err != nil {
 		log.Error(err, "Failed to cleanup orphaned resources")
+		// Failure to clean up should not prevent the next reconciliation, so no error is returned
 	}
 
-	// With the new subscription-based approach, we don't need to requeue periodically
+	log.Info("=== Full Reconciliation Cycle Finished ===")
+	// We rely on Watch to trigger updates, so there is no need to requeue regularly
 	return ctrl.Result{}, nil
 }
 
-// reconcileInitialFlows handles the initial synchronization and only processes the first 5 records
-func (r *IoTListenerRequestReconciler) reconcileInitialFlows(ctx context.Context) (ctrl.Result, error) {
-	log := log.FromContext(ctx)
-	log.Info("Performing initial sync, processing first 5 flows")
 
-	// Query the first 5 records
-	rows, err := r.DB.QueryContext(ctx, "SELECT id, nodes, edges FROM iot_flow ORDER BY id LIMIT 5")
-	if err != nil {
-		log.Error(err, "Failed to query iot_flow table for initial sync")
-		return ctrl.Result{}, err
-	}
-	defer rows.Close()
-
-	dbFlows := make(map[string]IoTFlow)
-	for rows.Next() {
-		var flow IoTFlow
-		if err := rows.Scan(&flow.ID, &flow.Nodes, &flow.Edges); err != nil {
-			log.Error(err, "Failed to scan flow row during initial sync")
-			continue
-		}
-		flowIDStr := fmt.Sprintf("%d", flow.ID)
-		dbFlows[flowIDStr] = flow
-	}
-
-	log.Info(fmt.Sprintf("Found %d flows for initial sync", len(dbFlows)))
-
-	// --- Reconciliation Logic for initial flows ---
-	for flowID, flow := range dbFlows {
-		log.Info("Reconciling flow during initial sync", "flowID", flowID)
-
-		sourcesConfig, err := extractSourcesFromNodes(flow.Nodes)
-		if err != nil {
-			log.Error(err, "Failed to extract sources from nodes JSON during initial sync", "flowID", flowID)
-			continue
-		}
-
-		// Reconcile ConfigMap for Collector
-		cmCollector := r.defineCollectorConfigMap(flowID, sourcesConfig, flow.Nodes, flow.Edges)
-		if err := r.reconcileConfigMap(ctx, cmCollector); err != nil {
-			log.Error(err, "Failed to reconcile collector configmap during initial sync", "flowID", flowID)
-			continue
-		}
-
-		// Reconcile ConfigMap for Processor
-		cmProcessor := r.defineProcessorConfigMap(flowID, flow.Nodes, flow.Edges)
-		if err := r.reconcileConfigMap(ctx, cmProcessor); err != nil {
-			log.Error(err, "Failed to reconcile processor configmap during initial sync", "flowID", flowID)
-			continue
-		}
-
-		// Reconcile Deployment for Collector
-		deplCollector := r.defineCollectorDeployment(flowID, cmCollector.Name)
-		if err := r.reconcileDeployment(ctx, deplCollector); err != nil {
-			log.Error(err, "Failed to reconcile collector deployment during initial sync", "flowID", flowID)
-			continue
-		}
-
-		// Reconcile Deployment for Processor
-		deplProcessor := r.defineProcessorDeployment(flowID, cmProcessor.Name)
-		if err := r.reconcileDeployment(ctx, deplProcessor); err != nil {
-			log.Error(err, "Failed to reconcile processor deployment during initial sync", "flowID", flowID)
-			continue
-		}
-	}
-
-	// --- Cleanup Logic ---
-	if err := r.cleanupOrphanedResources(ctx, dbFlows); err != nil {
-		log.Error(err, "Failed to cleanup orphaned resources during initial sync")
-	}
-
-	return ctrl.Result{}, nil
-}
 
 // getNamespace gets the namespace, preferably from the environment variable, otherwise use "listener-operator-system"
 func (r *IoTListenerRequestReconciler) getNamespace() string {
