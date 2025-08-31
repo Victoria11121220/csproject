@@ -39,11 +39,18 @@ spec:
       volumes:
       - name: config-volume
         configMap:
-          name: listener-operator-config # Corresponding to the ConfigMap created
+          name: listener-operator-config # Corresponding to the ConfigMap we created
       - name: secret-volume
         secret:
-          secretName: listener-operator-secrets # Corresponding to the Secret created
-          
+          secretName: listener-operator-secrets # Corresponding to the Secret we created
+
+      # Init Container, used to check the availability of dependent services before starting the main container
+      initContainers:
+      - name: wait-for-postgres
+        image: busybox:1.36 # Using a lightweight image
+        # Loop nslookup until the address of postgres-service is successfully resolved
+        command: ['sh', '-c', 'until nslookup postgres-service.listener-operator-system.svc.cluster.local; do echo "waiting for postgres..."; sleep 2; done;']
+
       # Container List
       containers:
       - command:
