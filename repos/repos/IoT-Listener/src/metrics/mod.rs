@@ -1,6 +1,6 @@
 use once_cell::sync::Lazy;
 use rocket_prometheus::{ prometheus::{GaugeVec, IntCounterVec, Opts}, PrometheusMetrics };
-use rocket::launch;
+
 pub static SOURCE_MESSAGE_COUNT: Lazy<IntCounterVec> = Lazy::new(|| {
     IntCounterVec::new(
         Opts::new(
