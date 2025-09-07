@@ -1,7 +1,6 @@
+pub mod http;
 pub mod mas_monitor;
 pub mod mqtt;
-pub mod kafka;
-pub mod http;
 pub mod traits;
 
 use crate::{graph::types::NodeData, nodes::sources::SourceConfig};
@@ -18,9 +17,8 @@ use traits::{
 #[derive(Deserialize, Debug, Clone)]
 #[serde(tag = "type", content = "config", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Source {
+    Http(http::HTTPSource),
     #[serde(rename = "MAS-MONITOR")]
     MASMonitor(mas_monitor::MASMonitorSource),
     Mqtt(mqtt::MQTTSource),
-    Kafka(kafka::KafkaSource),
-    Http(http::HTTPSource),
 }
