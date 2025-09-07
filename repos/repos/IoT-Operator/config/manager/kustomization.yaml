@@ -8,4 +8,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: listener-operator
-  newTag: dev
+  newTag: latest

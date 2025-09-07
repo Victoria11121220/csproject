@@ -39,14 +39,14 @@ metadata:
   name: postgres-service
   namespace: listener-operator-system
 spec:
-  # Service Type: ClusterIP means this service is only visible within the cluster
+  # Service Type: ClusterIP means that this service is only visible inside the cluster
   type: ClusterIP
-  # Port mapping: Map the service's port 5432 to the Pod's port 5432
+  # Port Mapping: Map the service's 5432 port to the Pod's 5432 port
   ports:
     - port: 5432
       targetPort: 5432
       protocol: TCP
-  # Selector: This Service will forward traffic to Pods with the label 'app: postgres'
+  # Selector: This service will forward traffic to Pods with the label 'app: postgres'
   selector:
     app: postgres
 
@@ -65,13 +65,13 @@ spec:
   template:
     metadata:
       labels:
-        # This label must match the Service selector
+        # This label must match the Service's selector
         app: postgres
     spec:
       containers:
         - name: postgres
           image: postgres:16
-          # Expose the container's port 5432
+          # Expose the container's 5432 port
           ports:
             - containerPort: 5432
           env:
@@ -83,8 +83,8 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: postgres-secret # Secret Name
-                  key: POSTGRES_PASSWORD # Secret Key
-          # Mount the persistent storage we applied for
+                  key: POSTGRES_PASSWORD # Keys in Secrets
+          # Mount the persistent storage we requested
           volumeMounts:
             - name: postgres-storage
               # Mount to the default path where PostgreSQL stores data
@@ -93,4 +93,4 @@ spec:
       volumes:
         - name: postgres-storage
           persistentVolumeClaim:
-            claimName: postgres-pvc # PVC name
+            claimName: postgres-pvc # PVC Name
