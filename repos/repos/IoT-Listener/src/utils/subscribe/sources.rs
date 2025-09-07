@@ -31,8 +31,7 @@ pub fn subscribe_and_monitor_source(
     let url = match source_node.source() {
         Source::MASMonitor(mas_monitor) => mas_monitor.get_monitor_url(),
         Source::Mqtt(mqtt) => mqtt.host.clone(),
-        Source::Kafka(kafka) => kafka.bootstrap_servers().to_string(),
-        Source::Http(http) => http.endpoint().to_string(),
+        Source::Http(http) => http.endpoint.clone(),
     };
 
     subscribe_and_restart(
