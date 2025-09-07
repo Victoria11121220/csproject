@@ -11,12 +11,10 @@ ARG DEBIAN_FRONTEND=noninteractive
 ENV TARGET=${TARGETPLATFORM//linux\/arm64/aarch64-unknown-linux-musl}
 ENV TARGET=${TARGET//linux\/amd64/x86_64-unknown-linux-musl}
 
-# Install dependencies for cross-compilation and OpenSSL
+# Dependencies for cross-compilation
 RUN apt-get update && apt-get install -y \
     build-essential cmake musl-tools curl \
-    gcc-aarch64-linux-gnu \
-    libssl-dev pkg-config zlib1g-dev libsasl2-dev libzstd-dev \
- && rm -rf /var/lib/apt/lists/*
+    gcc-aarch64-linux-gnu libssl-dev pkg-config
 
 # Add the target to the rustup toolchain
 RUN rustup target add $TARGET
@@ -26,14 +24,9 @@ WORKDIR /usr/src/app
 
 COPY Cargo.toml Cargo.lock ./
 
-# Define compilers for musl builds
-ENV CC_x86_64_unknown_linux_musl=musl-gcc
-ENV CXX_x86_64_unknown_linux_musl=g++
-ENV CC_aarch64_unknown_linux_musl=aarch64-linux-gnu-gcc
-ENV CXX_aarch64_unknown_linux_musl=aarch64-linux-gnu-g++
-
-# Optional: enforce static OpenSSL
-ENV OPENSSL_STATIC=1
+# Defined environment variables for rust compilation
+ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc
 
 COPY src ./src
 

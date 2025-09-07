@@ -3,27 +3,34 @@ name = "rust_listener"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "rust_listener"
+path = "src/lib.rs"
+
+[[bin]]
+name = "iot-collector"
+path = "src/bin/iot-collector.rs"
+
+[[bin]]
+name = "iot-processor"
+path = "src/bin/iot-processor.rs"
+
 [dependencies]
 paho-mqtt = { version = "0.12", features = ["vendored-ssl"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
 tokio-util = { version = "0.7.12", features = ["rt"] }
-sea-orm = { version = "^0.12.0", features = [
-    "sqlx-postgres",
-    "runtime-async-std-native-tls",
-    "macros",
-    "mock",
-] }
+sea-orm = { version = "^0.12.0", features = [ "sqlx-postgres", "runtime-async-std-native-tls", "macros", "mock" ] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-dotenv = "0.15"
+# dotenv = "0.15"
 async-trait = "0.1"
 futures = "0.3"
 chrono = "0.4"
 chrono-tz = "0.5.3"
 petgraph = { version = "0.5.0", features = ["serde-1"] }
-async-std = { version = "1.13", features = ["attributes"] }
+async-std = { version = "1.13", features = ["attributes"]}
 reqwest = { version = "0.12.8", features = ["json"] }
 rand = "0.8.5"
 enum_dispatch = "0.3.13"
@@ -32,8 +39,9 @@ async-recursion = "1.1.1"
 rocket = { version = "0.5.1", features = ["json"] }
 rocket_prometheus = "0.10"
 once_cell = "1.21"
-rdkafka = { version = "0.38", features = ["cmake-build"] }
-anyhow = "1.0.99"
+rdkafka = { version = "0.36", features = ["tokio"] }
+anyhow = "1.0"
+dotenvy = "0.15.7"
 
 [dev-dependencies]
 wiremock = "0.6.2"
@@ -48,15 +56,4 @@ features = [
 ]
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = [
-    'cfg(coverage,coverage_nightly)',
-] }
-
-
-
-
-[[bin]]
-name = "iot-collector"
-
-[[bin]]
-name = "iot-processor"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }
