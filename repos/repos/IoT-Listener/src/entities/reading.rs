@@ -9,7 +9,7 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
     pub sensor_id: i32,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub timestamp: DateTime,
     #[sea_orm(column_type = "Text")]
     pub raw_value: String,
     #[sea_orm(column_type = "Double", nullable)]
