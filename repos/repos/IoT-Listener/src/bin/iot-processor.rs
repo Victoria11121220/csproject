@@ -1,165 +1,81 @@
-use anyhow::{anyhow, Result};
-use petgraph::graph::NodeIndex;
-use rdkafka::{
-    config::ClientConfig,
-    consumer::{BaseConsumer, Consumer},
-    message::Message,
-};
 use rust_listener::{
-    get_database_connection,
-    graph::{build_graph::read_graph, types::GraphPayload},
+    graph,
     readings::StoreReading,
-    utils::error::upload_errors,
-    KafkaTrigger,
+    setup_database_connection,
+    EnvFilter,
 };
-use std::sync::Arc;
-use tokio::{
-    signal,
-    sync::mpsc::{unbounded_channel, UnboundedReceiver},
+use rdkafka::{
+    consumer::{Consumer, StreamConsumer},
+    Message,
 };
-use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
-use tracing_subscriber::EnvFilter;
-
-fn setup_kafka_consumer(
-    cancellation_token: &CancellationToken,
-) -> Result<(
-    tokio::task::JoinHandle<()>,
-    UnboundedReceiver<Vec<(NodeIndex, GraphPayload)>>,
-)> {
-    let bootstrap_servers =
-        std::env::var("KAFKA_BOOTSTRAP_SERVERS").unwrap_or_else(|_| "localhost:9092".to_string());
-    let topic =
-        std::env::var("KAFKA_PROCESSOR_TOPIC").unwrap_or_else(|_| "iot-triggers".to_string());
-    let group_id = std::env::var("KAFKA_PROCESSOR_GROUP_ID")
-        .unwrap_or_else(|_| "iot-processor-group".to_string());
-
-    info!(
-        "Setting up Kafka consumer for topic: {} on {}",
-        topic, bootstrap_servers
-    );
-
-    let consumer: BaseConsumer = ClientConfig::new()
-        .set("bootstrap.servers", &bootstrap_servers)
-        .set("group.id", &group_id)
-        .set("enable.auto.commit", "true")
-        .set("auto.offset.reset", "earliest")
-        .create()
-        .expect("Failed to create Kafka consumer");
-
-    consumer.subscribe(&[&topic])?;
-    info!("Subscribed to Kafka topic: {}", topic);
-
-    let (tx, rx) = unbounded_channel::<Vec<(NodeIndex, GraphPayload)>>();
-    let cancellation_token = cancellation_token.clone();
-
-    let handle = tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                     _ = cancellation_token.cancelled() => {
-                         info!("Kafka consumer cancelled for topic: {}", topic);
-                         break;
-                     }
-                     _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
-                         if let Some(Ok(message)) = consumer.poll(tokio::time::Duration::from_millis(100)) {
-                             if let Some(payload) = message.payload() {
-                                // 记录原始payload的长度
-                                info!("Received payload with length: {}", payload.len());
-                                
-                                // 尝试将其转换为字符串
-                                match std::str::from_utf8(payload) {
-                                    Ok(payload_str) => {
-                                        info!("payload: {}", payload_str);
-                                        
-                                        // 尝试解析为JSON
-                                        let value: Result<Vec<KafkaTrigger>, _> = serde_json::from_str(payload_str);
-                                        match value {
-                                            Ok(kafka_triggers) => {
-                                                info!("Successfully parsed {} KafkaTriggers", kafka_triggers.len());
-                                                let triggers: Vec<(NodeIndex, GraphPayload)> = kafka_triggers
-                                                    .into_iter()
-                                                    .map(|kt| (NodeIndex::new(kt.index), kt.payload))
-                                                    .collect();
-                                                if let Err(e) = tx.send(triggers) {
-                                                    error!("Failed to send message to transmitter: {:?}", e);
-                                                }
-                                            }
-                                            Err(e) => {
-                                                error!("Failed to parse Kafka message as JSON array of KafkaTrigger: {}", e);
-                                                error!("Payload that failed to parse: {}", payload_str);
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to convert payload to UTF-8 string: {}", e);
-                                    }
-                                }
-                            } else {
-                                info!("Received message with no payload");
-                            }
-                         }
-                     }
-                 }
-        }
-        info!("Kafka consumer stopped for topic: {}", topic);
-    });
-
-    Ok((handle, rx))
-}
+use tracing::{error, info};
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> anyhow::Result<()> {
+    // 1. Initialize logging and environment
     let filter = EnvFilter::from_default_env()
         .add_directive("sqlx::query=off".parse().unwrap())
         .add_directive("info".parse().unwrap());
     tracing_subscriber::fmt().with_env_filter(filter).init();
-    dotenv::dotenv().ok();
+    dotenvy::dotenv().ok();
+    info!("Starting iot-processor...");
 
-    let (flow_id, mut graph) = read_graph().map_err(|e| anyhow!("failed to read graph: {e}"))?;
-    let db = Arc::new(get_database_connection().await?);
-    let global_cancellation_token = CancellationToken::new();
+    // 2. Connect to the database
+    let db = setup_database_connection().await?;
+    info!("Database connection successful.");
 
-    let (kafka_join_handle, mut kafka_receiver) = setup_kafka_consumer(&global_cancellation_token)?;
+    // 3. Build the graph
+    let (flow_id, mut graph) = match graph::build_graph::read_graph() {
+        Ok(res) => res,
+        Err(e) => {
+            error!("Failed to build graph: {}", e);
+            return Err(anyhow::anyhow!("Failed to build graph"));
+        }
+    };
+    info!("Processing graph built successfully for flow_id: {}.", flow_id);
 
-    let receiver_cancel = CancellationToken::clone(&global_cancellation_token);
-    let store_db = Arc::clone(&db);
+    let brokers = std::env::var("KAFKA_BROKERS").expect("KAFKA_BROKERS must be set");
+    let group_id = std::env::var("KAFKA_GROUP_ID").expect("KAFKA_GROUP_ID must be set");
 
-    let processor_handle = tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                _ = receiver_cancel.cancelled() => {
-                    info!("Cancellation token triggered, shutting down");
-                    break;
-                },
-                Some(triggers) = kafka_receiver.recv() => {
-                    info!("Received {} triggers from Kafka", triggers.len());
-                    if triggers.is_empty() {
-                        warn!("Received empty triggers list from Kafka");
-                    } else {
-                        let (readings, _, node_errors) = graph.backpropagate_with_data(triggers).await;
-                        info!("Generated {} readings from triggers", readings.len());
-                        for reading in readings {
-                            if let Err(e) = reading.store(&store_db, flow_id).await {
-                                error!("Failed to store reading: {}; {:?}", e, reading);
+    // 4. Create Kafka Consumer
+    let consumer: StreamConsumer = rdkafka::config::ClientConfig::new()
+        .set("bootstrap.servers", &brokers)
+        .set("group.id", &group_id)
+        .set("auto.offset.reset", "earliest")
+        .create()?;
+
+    let topic = std::env::var("KAFKA_TOPIC").expect("KAFKA_TOPIC must be set");
+    consumer.subscribe(&[&topic])?;
+    info!("Subscribed to Kafka topic '{}'.", topic);
+
+    // 5. Main processing loop
+    info!("Waiting for triggers from Kafka...");
+    loop {
+        match consumer.recv().await {
+            Ok(msg) => {
+                if let Some(payload) = msg.payload() {
+                    match serde_json::from_slice::<graph::trigger_data::TriggerData>(payload) {
+                        Ok(trigger_data) => {
+                            info!("Received trigger data for nodes: {:?}", trigger_data.indices);
+                            
+                            let (processed_readings, _node_errors, _) =
+                                graph.backpropagate_with_data(trigger_data.indices, trigger_data.source_data).await;
+                            info!("Readings: {:?}", processed_readings);
+                            for r in processed_readings {
+                                if let Err(e) = r.store(&db, flow_id).await {
+                                    error!("Failed to store reading: {}", e);
+                                }
                             }
                         }
-                        if let Err(e) = upload_errors(&node_errors, &flow_id, &graph, &store_db).await {
-                            error!("Failed to upload errors: {}", e);
+                        Err(e) => {
+                            error!("Failed to deserialize trigger payload: {:?}", e);
                         }
                     }
                 }
             }
+            Err(e) => {
+                error!("Error receiving message from Kafka: {:?}", e);
+            }
         }
-    });
-
-    let handles = vec![kafka_join_handle, processor_handle];
-    signal::ctrl_c().await?;
-    global_cancellation_token.cancel();
-    for handle in handles {
-        handle.await?;
     }
-    // db.close().await?;
-    info!("Database connection closed");
-
-    Ok(())
 }
