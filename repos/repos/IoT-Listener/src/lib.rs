@@ -1,25 +1,31 @@
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+
+// Make modules public so they can be used by binary crates
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod entities;
 pub mod graph;
-pub mod metrics;
 pub mod nodes;
 pub mod readings;
 pub mod sources;
 pub mod utils;
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub mod metrics;
+
+#[macro_use]
+extern crate rocket;
 extern crate paho_mqtt as mqtt;
-use sea_orm::{Database, DatabaseConnection, DbErr};
-use serde::{Deserialize, Serialize};
-use std::env;
 
-use crate::graph::types::GraphPayload;
+// Re-export commonly used items for convenience in binaries
+pub use graph::build_graph::read_graph;
+pub use entities::reading::Model as Reading;
+pub use sea_orm::{ Database, DatabaseConnection, DbErr };
+pub use std::env;
+pub use tracing;
+pub use tracing_subscriber::{ self, EnvFilter };
+pub use utils::subscribe::subscribe_to_sources;
 
-/// Get the database connection
-pub async fn get_database_connection() -> Result<DatabaseConnection, DbErr> {
-    let database_url: String = env::var("uri").expect("uri must be set");
-    Database::connect(&database_url).await
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct KafkaTrigger {
-    pub index: usize,
-    pub payload: GraphPayload,
+/// Get the database connection from the `uri` environment variable.
+pub async fn setup_database_connection() -> Result<DatabaseConnection, DbErr> {
+	let database_url: String = env::var("uri").expect("uri must be set");
+	Database::connect(&database_url).await
 }
