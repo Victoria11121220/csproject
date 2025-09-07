@@ -21,6 +21,21 @@ pub struct MQTTSource {
     data: Arc<RwLock<NodeData>>,
 }
 
+impl MQTTSource {
+    /// Get the current data stored in the MQTT source
+    pub fn get_data(&self) -> Result<NodeData, Box<dyn std::error::Error>> {
+        let data = self.data.read().map_err(|_| "Failed to read data")?;
+        Ok(data.clone())
+    }
+    
+    /// Update the data stored in the MQTT source
+    pub fn update_data(&self, new_data: NodeData) -> Result<(), Box<dyn std::error::Error>> {
+        let mut data = self.data.write().map_err(|_| "Failed to write data")?;
+        *data = new_data;
+        Ok(())
+    }
+}
+
 impl AsyncSource for MQTTSource {
     fn get_lock(&self) -> Arc<RwLock<NodeData>> {
         Arc::clone(&self.data)
