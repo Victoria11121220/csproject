@@ -50,7 +50,7 @@ impl Default for NodeData {
 pub type GraphPayloadObjects = HashMap<String, NodeDataObject>;
 pub type GraphPayloadCollections = HashMap<String, NodeDataCollection>;
 pub type GraphPayloadMixed = HashMap<String, NodeData>;
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum GraphPayload {
     Objects(GraphPayloadObjects),
     Collections(GraphPayloadCollections),
