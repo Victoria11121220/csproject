@@ -4,7 +4,6 @@ use crate::graph::{
 	types::{ GraphPayload, GraphPayloadObjects, NodeData },
 };
 use serde::{ Deserialize, Deserializer, Serialize };
-use tracing::info;
 use std::collections::HashSet;
 
 #[derive(Debug, Clone, Serialize)]
@@ -35,21 +34,14 @@ impl ConcreteNode for AverageNode {
 		let mut count = 0;
 
 		for value in inputs.values() {
-			// FIX: Instead of converting the whole object, look for a "value" field.
-			// if let Some(num) = value.get("value").and_then(|v| v.as_f64()) {
-			// 	sum += num;
-			// 	count += 1;
-			// }
-			if let Some(v) = value.as_f64() {
-				sum += v;
+			if let Some(num) = value.as_f64() {
+				sum += num;
 				count += 1;
 			}
 		}
 
 		if count == 0 {
-			return Err(NodeError::InvalidInputError(
-				"No inputs with a valid 'value' field found".to_string(),
-			));
+			return Err(NodeError::InvalidInputError("No valid numbers found".to_string()));
 		}
 
 		let average = sum / (count as f64);
@@ -69,14 +61,8 @@ impl ConcreteNode for AverageNode {
 		for value in inputs.values() {
 			match value {
 				NodeData::Object(obj) => {
-					info!("compute_mixed data: {:?}", obj);
-					// FIX: Instead of converting the whole object, look for a "value" field.
-					// if let Some(num) = obj.get("value").and_then(|v| v.as_f64()) {
-					// 	sum += num;
-					// 	count += 1;
-					// }
-					if let Some(v) = obj.as_f64() {
-						sum += v;
+					if let Some(num) = obj.as_f64() {
+						sum += num;
 						count += 1;
 					}
 				}
@@ -84,8 +70,7 @@ impl ConcreteNode for AverageNode {
 					let mut collection_sum = 0.0;
 					let mut collection_count = 0;
 					for item in collection {
-						// FIX: Instead of converting the whole object, look for a "value" field.
-						if let Some(num) = item.get("value").and_then(|v| v.as_f64()) {
+						if let Some(num) = item.as_f64() {
 							collection_sum += num;
 							collection_count += 1;
 						}
@@ -99,10 +84,7 @@ impl ConcreteNode for AverageNode {
 		}
 
 		if count == 0 {
-			// This can still happen if no inputs have a valid "value" field, which is correct.
-			return Err(NodeError::InvalidInputError(
-				"No inputs with a valid 'value' field found".to_string(),
-			));
+			return Err(NodeError::InvalidInputError("No valid numbers found".to_string()));
 		}
 
 		let average = sum / (count as f64);
