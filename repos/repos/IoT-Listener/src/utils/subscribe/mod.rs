@@ -6,7 +6,6 @@ use sea_orm::DatabaseConnection;
 use sources::subscribe_and_monitor_source;
 use tokio::{ sync::mpsc::UnboundedReceiver, task::JoinHandle };
 use tokio_util::sync::CancellationToken;
-use tracing::{info, error, warn};
 
 use crate::{
 	graph::{ edge::Edge, node::Node },
@@ -94,7 +93,6 @@ fn subscribe_and_restart(
 		}
 	})
 }
-
 
 /// Subscribe to both the sources and the reading nodes in the graph
 ///
