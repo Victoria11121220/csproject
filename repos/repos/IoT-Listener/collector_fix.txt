@@ -1,0 +1,17 @@
+// Add this to the top of iot-collector.rs
+use petgraph::graph::NodeIndex;
+use rust_listener::{graph, setup_database_connection, EnvFilter};
+use rdkafka::producer::{FutureProducer, FutureRecord};
+use std::{sync::Arc, time::Duration};
+use tokio::sync::mpsc::UnboundedReceiver;
+use tokio_util::sync::CancellationToken;
+use tracing::{error, info};
+use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
+
+// Add this new data structure
+#[derive(Serialize, Deserialize, Debug)]
+struct TriggerData {
+    indices: Vec<NodeIndex>,
+    source_data: HashMap<String, serde_json::Value>, // Using String instead of NodeIndex for serialization
+}
