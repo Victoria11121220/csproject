@@ -14,12 +14,28 @@ echo "Default MQTT host address: $DEFAULT_HOST"
 echo -e "\nTest 2: Using environment variable"
 export MQTT_HOST=192.168.1.100
 VARIABLE_HOST=${MQTT_HOST:-host.docker.internal}
+#!/bin/bash
+
+# Script to test MQTT host address replacement
+
+echo "Testing MQTT host address replacement functionality"
+
+# Testing Default Values
+echo "Test 1: Using default value"
+unset MQTT_HOST
+DEFAULT_HOST=${MQTT_HOST:-host.docker.internal}
+echo "Default MQTT host address: $DEFAULT_HOST"
+
+# Testing Environment Variable Setting
+echo -e "\nTest 2: Using environment variable"
+export MQTT_HOST=192.168.1.100
+VARIABLE_HOST=${MQTT_HOST:-host.docker.internal}
 echo "Environment variable MQTT host address: $VARIABLE_HOST"
 
-# Test actual replacement effect in script
+# Testing Actual Replacement Effect in Script
 echo -e "\nTest 3: Actual replacement effect test"
 TEST_MQTT_HOST=${MQTT_HOST:-host.docker.internal}
-echo "Testing SQL snippets:"
+echo "Test SQL snippet:"
 echo "DO \$\$
 DECLARE
     mqtt_host TEXT := '$TEST_MQTT_HOST';
@@ -31,4 +47,4 @@ BEGIN
     ON CONFLICT (id) DO NOTHING;
 END \$\$;"
 
-echo -e "\nTesting Completed"
+echo -e "\nTest 3 completed"

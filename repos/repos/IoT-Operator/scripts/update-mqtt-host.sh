@@ -7,47 +7,47 @@ echo "Start updating the MQTT host IP in the database..."
 
 # Get the MQTT host address. If the environment variable is not set, try to automatically detect it.
 if [ -z "$MQTT_HOST" ]; then
-    echo "MQTT_HOST环境变量未设置，尝试自动检测宿主机IP..."
+    echo "The MQTT_HOST environment variable is not set, try to automatically detect the host IP..."
     
     # Check whether you are in Linux environment
     PLATFORM=$(uname)
     
     if [[ "$PLATFORM" == "Linux" ]]; then
-        echo "Linux environment detected"
-        
+        echo "Detected Linux environment"
+
         # On Linux, host.docker.internal may not be available
-        # We need to obtain the IP address of the host machine
-        
+        # We need to get the host machine's IP address
+
         # Method 1: Try to use docker network inspect to get the gateway IP
         if command -v docker &> /dev/null; then
             echo "Detecting Docker network..."
-            # Find Kind Network
+            # Find kind network
             KIND_NETWORK=$(docker network ls | grep kind | awk '{print $1}' | head -n 1)
             
             if [ -n "$KIND_NETWORK" ]; then
                 echo "Found Kind network: $KIND_NETWORK"
-                # Get the network gateway IP
+                # Get network gateway IP
                 HOST_IP=$(docker network inspect $KIND_NETWORK | grep Gateway | head -1 | awk -F'"' '{print $4}')
                 
                 if [ -n "$HOST_IP" ]; then
-                    echo "Obtained host IP from Docker network: $HOST_IP"
+                    echo "Got host IP from Docker network: $HOST_IP"
                 else
-                    echo "Unable to get gateway IP from Docker network"
+                    echo "Failed to get gateway IP from Docker network"
                 fi
             else
                 echo "Kind network not found"
             fi
         fi
 
-        # Method 2: If Method 1 fails, try to use the routing table
+        # Method 2: If Method 1 fails, try to use routing table
         if [ -z "$HOST_IP" ]; then
             echo "Using routing table to detect host IP..."
             HOST_IP=$(ip route | grep default | awk '{print $3}' | head -n 1)
             
             if [ -n "$HOST_IP" ]; then
-                echo "Obtained host IP from routing table: $HOST_IP"
+                echo "Got host IP from routing table: $HOST_IP"
             else
-                echo "Unable to get default gateway from routing table"
+                echo "Failed to get default gateway from routing table"
             fi
         fi
 
@@ -60,10 +60,10 @@ if [ -z "$MQTT_HOST" ]; then
     else
         # macOS and other environments use host.docker.internal
         HOST_IP="host.docker.internal"
-        echo "For non-Linux environments, use the default value: host.docker.internal"
+        echo "Non-Linux environment, using default value: host.docker.internal"
     fi
-    
-    # Set the MQTT host address
+
+    # Set MQTT host address
     MQTT_HOST=$HOST_IP
 else
     echo "Use the MQTT host address set in the environment variable: $MQTT_HOST"
@@ -75,12 +75,12 @@ echo "The MQTT host address will be used: $MQTT_HOST"
 echo "Waiting for the PostgreSQL Pod to start..."
 kubectl wait --for=condition=ready pod -l app=postgres --timeout=120s -n listener-operator-system
 
-# Get the PostgreSQL Pod name
+# Get the PostgreSQL Pod Name
 POSTGRES_POD=$(kubectl get pod -l app=postgres -o jsonpath="{.items[0].metadata.name}" -n listener-operator-system)
-echo "Found PostgreSQL Pod: $POSTGRES_POD"
+echo "找到PostgreSQL Pod: $POSTGRES_POD"
 
 # Update the MQTT host address in the database
-echo "Updating the MQTT host address in the database..."
+echo "Update the MQTT host address in the database..."
 
 kubectl exec -it $POSTGRES_POD -n listener-operator-system -- psql -U postgres -d iot_dataflow_manager << EOF
 
@@ -97,8 +97,8 @@ EOF
 
 echo "Database update completed"
 
-# Update the MQTT host address in the ConfigMap
-echo "Updating the MQTT host address in the ConfigMap..."
+# Also update the MQTT host address in the ConfigMap
+echo "Update the MQTT host address in the ConfigMap..."
 kubectl patch configmap mqtt-config -n listener-operator-system -p "{\"data\":{\"MQTT_BROKER_HOST\":\"$MQTT_HOST\"}}"
 
 echo "MQTT configuration update completed"

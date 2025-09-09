@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# IoT-Operator Deployment script
+# IoT-Operator deployment script
 
-echo "Starting deployment of IoT-Operator..."
+echo "Start deployment IoT-Operator..."
 
 make generate
 # 1. Build Docker image
@@ -55,14 +55,14 @@ kubectl apply -f k8s-manifests/mqtt-config.yaml -n listener-operator-system
 echo "11. Wait for PostgreSQL to be ready..."
 kubectl wait --for=condition=ready pod -l app=postgres --timeout=120s
 
-# 12. Initialize PostgreSQL database
-echo "12. Initialize PostgreSQL database..."
+# 12. Initialize the PostgreSQL database
+echo "12. Initialize the PostgreSQL database..."
 ./k8s-manifests/init-postgres.sh
 
-# 13. Create IoTListenerRequest instances (optional, for testing old CRD mechanism)
-echo "13. Create IoTListenerRequest instances..."
+# 13. Create IoTListenerRequest instance (optional, for testing old CRD mechanism)
+echo "13. Create IoTListenerRequest instance..."
 kubectl apply -k config/samples/
 
-echo "Deployment complete!"
+echo "Deployment completed!"
 echo "Check Pod status: kubectl get pods -n listener-operator-system"
 echo "View Operator logs: kubectl logs -n listener-operator-system -l control-plane=controller-manager"

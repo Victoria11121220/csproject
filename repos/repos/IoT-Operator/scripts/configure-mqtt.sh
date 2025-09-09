@@ -4,7 +4,7 @@
 
 echo "Start configuring the MQTT address..."
 
-# Check if running in a Linux environment
+# Check whether you are in Linux environment
 # If PLATFORM environment variable is not set, use uname command to detect
 if [ -z "$PLATFORM" ]; then
     PLATFORM=$(uname)

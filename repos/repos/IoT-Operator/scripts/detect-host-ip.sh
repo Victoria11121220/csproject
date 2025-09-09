@@ -16,7 +16,7 @@ elif [ -n "$DOCKER_HOST" ]; then
     HOST_IP=$(echo $DOCKER_HOST | sed 's/tcp:\/\///' | sed 's/:[0-9]*$//')
 else
     # On Linux, we may need to use gateway IP
-    # Check if there is a kind network
+    # Check if Kind network exists
     if command -v docker &> /dev/null; then
         KIND_NETWORK=$(docker network ls | grep kind | awk '{print $1}')
         if [ -n "$KIND_NETWORK" ]; then
@@ -28,18 +28,18 @@ else
                 HOST_IP=$(ip route | grep default | awk '{print $3}' | head -n 1)
             fi
         else
-            echo "Kind network not detected, using default gateway"
-            # Use default gateway IP
+            echo "未检测到Kind网络，使用默认网关"
+            # Use the default gateway IP
             HOST_IP=$(ip route | grep default | awk '{print $3}' | head -n 1)
         fi
     else
-        echo "Docker not detected, using default gateway"
-        # Use default gateway IP
+        echo "Detected no Docker, using default gateway"
+        # Use the default gateway IP
         HOST_IP=$(ip route | grep default | awk '{print $3}' | head -n 1)
     fi
 fi
 
-# If all else fails, use localhost as a last resort
+# If all else fails, use localhost as a last resort.
 if [ -z "$HOST_IP" ]; then
     HOST_IP="localhost"
 fi
