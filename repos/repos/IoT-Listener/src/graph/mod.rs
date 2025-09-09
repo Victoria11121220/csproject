@@ -81,7 +81,7 @@ impl RwLockGraph {
         // Similarly clear all nodes that require backpropagation and the nodes that are affected by them
         requires_clear.iter().for_each(|node_index| graph[*node_index].clear());
 
-        // Pre-populate source nodes with provided data if available
+        // Pre-populate source and datalake nodes with provided data if available
         for node_index in &affected_nodes {
             let node_id = { 
                 let node = &graph[*node_index];
@@ -89,20 +89,38 @@ impl RwLockGraph {
             };
             
             if let Some(node) = graph.node_weight_mut(*node_index) {
-                if let crate::nodes::NodeType::Source(source_node) = node.concrete_node_mut() {
-                    if let Some(json_data) = source_data.get(&node_id) {
-                        match serde_json::from_value(json_data.clone()) {
-                            Ok(node_data) => {
-                                // Set the prefilled data for use during computation
-                                if let Err(e) = source_node.set_prefilled_data(node_data) {
-                                    info!("Failed to set prefilled data for node {}: {:?}", node_id, e);
+                match node.concrete_node_mut() {
+                    crate::nodes::NodeType::Source(source_node) => {
+                        if let Some(json_data) = source_data.get(&node_id) {
+                            match serde_json::from_value(json_data.clone()) {
+                                Ok(node_data) => {
+                                    // Set the prefilled data for use during computation
+                                    if let Err(e) = source_node.set_prefilled_data(node_data) {
+                                        info!("Failed to set prefilled data for node {}: {:?}", node_id, e);
+                                    }
                                 }
-                            }
-                            Err(e) => {
-                                info!("Failed to deserialize source data for node {}: {:?}", node_id, e);
+                                Err(e) => {
+                                    info!("Failed to deserialize source data for node {}: {:?}", node_id, e);
+                                }
                             }
                         }
                     }
+                    crate::nodes::NodeType::Datalake(datalake_node) => {
+                        if let Some(json_data) = source_data.get(&node_id) {
+                            match serde_json::from_value(json_data.clone()) {
+                                Ok(node_data) => {
+                                    // Set the prefilled data for use during computation
+                                    if let Err(e) = datalake_node.set_prefilled_data(node_data) {
+                                        info!("Failed to set prefilled data for node {}: {:?}", node_id, e);
+                                    }
+                                }
+                                Err(e) => {
+                                    info!("Failed to deserialize datalake data for node {}: {:?}", node_id, e);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -157,8 +175,14 @@ impl RwLockGraph {
         // Clear prefilled data after backpropagation to avoid using stale data in future computations
         for node_index in &affected_nodes {
             if let Some(node) = graph.node_weight_mut(*node_index) {
-                if let crate::nodes::NodeType::Source(source_node) = node.concrete_node_mut() {
-                    let _ = source_node.clear_prefilled_data();
+                match node.concrete_node_mut() {
+                    crate::nodes::NodeType::Source(source_node) => {
+                        let _ = source_node.clear_prefilled_data();
+                    }
+                    crate::nodes::NodeType::Datalake(datalake_node) => {
+                        let _ = datalake_node.clear_prefilled_data();
+                    }
+                    _ => {}
                 }
             }
         }

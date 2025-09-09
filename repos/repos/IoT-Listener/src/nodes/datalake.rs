@@ -3,7 +3,7 @@ use crate::{
 	graph::{
 		concrete_node::ConcreteNode,
 		node::{ NodeError, NodeResult },
-		types::{ GraphPayload, GraphPayloadObjects },
+		types::{ GraphPayload, GraphPayloadObjects, NodeData },
 	},
 };
 use serde::Deserialize;
@@ -21,6 +21,9 @@ pub struct DatalakeNode {
 	sensor_id: i32,
 	#[serde(skip)]
 	reading: ThreadSafeReadingStore,
+	// Pre-filled data for use in processor
+	#[serde(skip)]
+	prefilled_data: Arc<RwLock<Option<NodeData>>>,
 }
 
 impl DatalakeNode {
@@ -31,6 +34,36 @@ impl DatalakeNode {
 	pub fn get_reading(&self) -> ThreadSafeReadingStore {
 		Arc::clone(&self.reading)
 	}
+	
+	/// Set prefilled data for use in processor
+    pub fn set_prefilled_data(&self, data: NodeData) -> Result<(), NodeError> {
+        let mut prefilled_data = self.prefilled_data.write().map_err(|_| NodeError::GenericComputationError("Failed to write prefilled data".to_string()))?;
+        *prefilled_data = Some(data);
+        Ok(())
+    }
+    
+    /// Clear prefilled data
+    pub fn clear_prefilled_data(&self) -> Result<(), NodeError> {
+        let mut prefilled_data = self.prefilled_data.write().map_err(|_| NodeError::GenericComputationError("Failed to write prefilled data".to_string()))?;
+        *prefilled_data = None;
+        Ok(())
+    }
+    
+    /// Get prefilled data if available
+    fn get_prefilled_data(&self) -> Result<Option<NodeData>, NodeError> {
+        let prefilled_data = self.prefilled_data.read().map_err(|_| NodeError::GenericComputationError("Failed to read prefilled data".to_string()))?;
+        Ok(prefilled_data.clone())
+    }
+}
+
+impl Default for DatalakeNode {
+    fn default() -> Self {
+        Self {
+            sensor_id: 0,
+            reading: Arc::new(RwLock::new(None)),
+            prefilled_data: Arc::new(RwLock::new(None)),
+        }
+    }
 }
 
 impl ConcreteNode for DatalakeNode {
@@ -61,6 +94,16 @@ impl ConcreteNode for DatalakeNode {
 	}
 
 	async fn compute_objects(&self, _inputs: &GraphPayloadObjects) -> NodeResult {
+		// Check if we have prefilled data (used in processor)
+        if let Ok(Some(prefilled_data)) = self.get_prefilled_data() {
+            match prefilled_data {
+                NodeData::Object(value) => return Ok(GraphPayload::Objects(vec![(self.default_output_handle(), value)].into_iter().collect())),
+                NodeData::Collection(values) => return Ok(GraphPayload::Collections(
+                    vec![(self.default_output_handle(), values)].into_iter().collect(),
+                )),
+            }
+        }
+        
 		let reading_lock = self.get_reading();
 		// Try to acquire a read lock on the reading store
 		let (sensor, readings) = match reading_lock.read() {
@@ -152,10 +195,7 @@ mod tests {
 
 	#[test]
 	fn test_set_actual_handles() {
-		let mut reading_node = DatalakeNode {
-			sensor_id: 1,
-			reading: Arc::new(RwLock::new(None)),
-		};
+		let mut reading_node = DatalakeNode::default();
 		let input_handles = HashSet::new();
 		let output_handles = HashSet::from([reading_node.default_output_handle()]);
 		assert!(reading_node.set_actual_handles(input_handles, output_handles).is_ok());
@@ -174,11 +214,8 @@ mod tests {
 
 	#[tokio::test]
 	async fn test_reading_node() {
-		let reading_node = DatalakeNode {
-			sensor_id: 1,
-			reading: Arc::new(RwLock::new(None)),
-		};
-		assert_eq!(reading_node.sensor_id(), 1);
+		let reading_node = DatalakeNode::default();
+		assert_eq!(reading_node.sensor_id(), 0); // Default value
 		assert!(reading_node.get_reading().read().unwrap().is_none());
 		assert!(!reading_node.generates_reading());
 	}
@@ -203,10 +240,7 @@ mod tests {
 
 	#[tokio::test]
 	async fn test_reading_node_computation() {
-		let reading_node = DatalakeNode {
-			sensor_id: 1,
-			reading: Arc::new(RwLock::new(None)),
-		};
+		let reading_node = DatalakeNode::default();
 		let empty_map: HashMap<String, serde_json::Value> = HashMap::new();
 		let result = reading_node.compute_objects(&empty_map).await;
 		assert!(result.is_ok());
@@ -293,5 +327,52 @@ mod tests {
 				HashMap::from([(reading_node.default_output_handle(), serde_json::json!("test"))])
 			)
 		).await;
+	}
+
+	#[tokio::test]
+	async fn test_reading_node_prefilled_data() {
+		let reading_node = DatalakeNode::default();
+		let empty_map: HashMap<String, serde_json::Value> = HashMap::new();
+		
+		// Test with prefilled data
+		let prefilled_data = crate::graph::types::NodeData::Collection(vec![
+			serde_json::json!(10.0),
+			serde_json::json!(20.0),
+			serde_json::json!(30.0)
+		]);
+		
+		assert!(reading_node.set_prefilled_data(prefilled_data.clone()).is_ok());
+		
+		let result = reading_node.compute_objects(&empty_map).await;
+		assert!(result.is_ok());
+		let payload = result.unwrap();
+		
+		match payload {
+			GraphPayload::Collections(data_map) => {
+				assert!(data_map.contains_key(&reading_node.default_output_handle()));
+				let values = data_map.get(&reading_node.default_output_handle()).unwrap();
+				assert_eq!(values.len(), 3);
+				assert_eq!(values[0], serde_json::json!(10.0));
+				assert_eq!(values[1], serde_json::json!(20.0));
+				assert_eq!(values[2], serde_json::json!(30.0));
+			}
+			_ => panic!("Expected GraphPayload::Collections")
+		}
+		
+		// Clear prefilled data and test again
+		assert!(reading_node.clear_prefilled_data().is_ok());
+		
+		let result = reading_node.compute_objects(&empty_map).await;
+		assert!(result.is_ok());
+		let payload = result.unwrap();
+		
+		match payload {
+			GraphPayload::Objects(data_map) => {
+				assert!(data_map.contains_key(&reading_node.default_output_handle()));
+				let value = data_map.get(&reading_node.default_output_handle()).unwrap();
+				assert_eq!(*value, serde_json::json!(null));
+			}
+			_ => panic!("Expected GraphPayload::Objects")
+		}
 	}
 }
