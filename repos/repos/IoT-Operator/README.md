@@ -1,8 +1,8 @@
 # listener-operator
-IoT Operator for managing IoT data flows in Kubernetes
+// TODO(user): Add simple overview of use/purpose
 
 ## Description
-The IoT Operator is a Kubernetes operator that manages IoT data flows by automatically creating and updating deployments for data collectors and processors based on flow definitions stored in a PostgreSQL database. It watches the database for changes and ensures that the appropriate Kubernetes resources are created or updated accordingly.
+// TODO(user): An in-depth paragraph about your project and overview of use
 
 ## Getting Started
 
@@ -112,3 +112,26 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
+
+
+
+
+## Deployments:
+Deployment Instruction：
+- make docker-build IMG=listener-operator:dev：Build a local image
+- kind load docker-image listener-operator:dev --name listener-cluster：Load the local image into the cluster. In a production environment, this step needs to be changed to push
+- make install Install CRDs
+- make deploy IMG=listener-operator:dev Deploy
+
+namespace: listener-operator-system
+
+
+Refactored workflow：
+
+1. After the Operator is started, it checks for new rows in the iot_flow table through the PostgreSQL polling mechanism (a LISTEN/NOTIFY mechanism will be implemented in the future)
+2. When a new row is detected, the Operator pulls two images: iot-collector:latest and iot-processor:latest. These two images are used to replace the original LISTENER-related images and environment variables.
+3. The database initialization script (k8s-manifests/init-postgres.sh) initializes the data tables in PostgreSQL and creates triggers to support the NOTIFY mechanism.
+4. All major changes should be committed so they can be rolled back
+5. The containers in the listener-operator-system namespace are configured with hostAliases to access ports on the host machine, such as 1883 for receiving external MQTT sources.
+6. Kafka and PostgreSQL services will be started in listener-operator-system
+7. The environment variables (nodes, edges, flow_id, etc.) required when starting iot-collector:latest and iot-processor:latest are obtained from the iot_flow table and supplemented by the configuration in dotenv-listener/.env

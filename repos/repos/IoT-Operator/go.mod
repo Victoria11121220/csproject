@@ -10,10 +10,7 @@ require (
 	sigs.k8s.io/controller-runtime v0.17.3
 )
 
-require (
-	github.com/jmoiron/sqlx v1.4.0 // indirect
-	github.com/lib/pq v1.10.9 // indirect
-)
+require github.com/lib/pq v1.10.9 // indirect
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
