@@ -9,31 +9,16 @@ rules:
   resources:
   - configmaps
   verbs:
-  - create
-  - delete
   - get
   - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - apps
-  resources:
-  - deployments
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
   - watch
 - apiGroups:
   - ""
   resources:
-  - configmaps
+  - pods
   verbs:
   - create
+  - delete
   - get
   - list
   - patch
@@ -44,6 +29,24 @@ rules:
   resources:
   - iotlistenerrequests
   verbs:
+  - create
+  - delete
   - get
   - list
+  - patch
+  - update
   - watch
+- apiGroups:
+  - iot.visualiseinfo.com
+  resources:
+  - iotlistenerrequests/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - iot.visualiseinfo.com
+  resources:
+  - iotlistenerrequests/status
+  verbs:
+  - get
+  - patch
+  - update
