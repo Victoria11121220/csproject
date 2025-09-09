@@ -1,4 +1,4 @@
-# Filename: kind-config-listener.yaml
+# File name: kind-config-listener.yaml
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: listener-cluster
@@ -10,8 +10,8 @@ nodes:
     hostnames:
     - "host.docker.internal"
 
-# If you plan to use worker nodes, add mappings for them as well
-# If you only have a single node, the section below can be omitted, but adding it doesn't hurt
+# If you plan to use worker nodes, add mappings for them as well.
+# If you only have one node, the following part can be omitted, but it doesn't hurt to include it.
 - role: worker
   extraHostMappings:
   - ip: "host-gateway"
