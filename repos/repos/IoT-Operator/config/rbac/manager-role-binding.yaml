@@ -1,0 +1,17 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  # The name of the Binding should reflect its function.
+  name: manager-role-binding
+subjects:
+- kind: ServiceAccount
+  # The ServiceAccount used by your Operator must be specified here.
+  name: listener-operator-controller-manager
+  # The namespace where the ServiceAccount is located
+  namespace: listener-operator-system
+roleRef:
+  # Because we are binding a ClusterRole, the kind must be ClusterRole
+  kind: ClusterRole
+  # Reference the ClusterRole you have defined
+  name: manager-role
+  apiGroup: rbac.authorization.k8s.io
