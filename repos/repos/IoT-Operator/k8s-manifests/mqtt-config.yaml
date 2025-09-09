@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mqtt-config
+data:
+  MQTT_BROKER_HOST: "host.docker.internal"
+  MQTT_BROKER_PORT: "1883"

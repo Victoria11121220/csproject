@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: iot-env-config
+  namespace: listener-operator-system
+data:
+  KAFKA_BROKERS: "kafka:9092"
+  KAFKA_TOPIC: "iot_triggers"
+  KAFKA_GROUP_ID: "iot_processor_group"
