@@ -4,13 +4,13 @@
 
 echo "Configuring MQTT addresses for Linux environments..."
 
-# In Linux environments, we use several methods to detect the host IP
+# In the Linux environment, we use several methods to detect the host IP
 
-# Method 1: Check Docker network
+# Method 1: Use Docker Network Check
 HOST_IP=""
 if command -v docker &> /dev/null; then
-    echo "Checking Docker network..."
-    # Find kind network
+    echo "Detecting Docker network..."
+    # Find Kind Network
     KIND_NETWORK=$(docker network ls | grep kind | awk '{print $1}' | head -n 1)
     
     if [ -n "$KIND_NETWORK" ]; then
@@ -19,7 +19,7 @@ if command -v docker &> /dev/null; then
         HOST_IP=$(docker network inspect $KIND_NETWORK | grep Gateway | head -1 | awk -F'"' '{print $4}')
         
         if [ -n "$HOST_IP" ]; then
-            echo "Obtained host IP from Docker network: $HOST_IP"
+            echo "Successfully obtained host IP from Docker network: $HOST_IP"
         else
             echo "Failed to obtain gateway IP from Docker network"
         fi
@@ -30,27 +30,27 @@ fi
 
 # Method 2: If Method 1 fails, try using the routing table
 if [ -z "$HOST_IP" ]; then
-    echo "Using routing table to detect host IP..."
+    echo "Use the routing table to detect the host IP..."
     HOST_IP=$(ip route | grep default | awk '{print $3}' | head -n 1)
     
     if [ -n "$HOST_IP" ]; then
-        echo "Obtained host IP from routing table: $HOST_IP"
+        echo "Successfully obtained host IP from routing table: $HOST_IP"
     else
         echo "Failed to obtain default gateway from routing table"
     fi
 fi
 
-# Method 3: If both methods fail, try using 172.17.0.1 (Docker default bridge gateway)
+# 方法3: 如果以上方法都失败，尝试使用172.17.0.1（Docker默认网桥网关）
 if [ -z "$HOST_IP" ]; then
-    echo "Trying Docker default bridge gateway: 172.17.0.1"
+    echo "尝试使用Docker默认网桥网关: 172.17.0.1"
     HOST_IP="172.17.0.1"
-    echo "Using default Docker bridge gateway: $HOST_IP"
+    echo "使用默认Docker网桥网关: $HOST_IP"
 fi
 
-# Update configuration
-echo "Setting MQTT configuration to use detected address: $HOST_IP"
+# 更新配置
+echo "设置MQTT配置使用检测到的地址: $HOST_IP"
 
-# Update mqtt-config.yaml file
+# 更新mqtt-config.yaml文件
 cat > k8s-manifests/mqtt-config.yaml << EOF
 apiVersion: v1
 kind: ConfigMap
@@ -61,9 +61,9 @@ data:
   MQTT_BROKER_PORT: "1883"
 EOF
 
-echo "Updated k8s-manifests/mqtt-config.yaml file"
-echo "MQTT_BROKER_HOST set to: $HOST_IP"
+echo "已更新 k8s-manifests/mqtt-config.yaml 文件"
+echo "MQTT_BROKER_HOST 设置为: $HOST_IP"
 
-# Export environment variables for use by database initialization scripts
+# 导出环境变量供数据库初始化脚本使用
 export MQTT_HOST=$HOST_IP
-echo "Exported environment variables MQTT_HOST=$HOST_IP"
+echo "已导出环境变量 MQTT_HOST=$HOST_IP"

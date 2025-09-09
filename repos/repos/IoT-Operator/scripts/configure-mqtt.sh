@@ -2,10 +2,15 @@
 
 # Automatically detect the environment and configure the correct MQTT address
 
-echo "Starting MQTT address configuration..."
+echo "Start configuring the MQTT address..."
 
 # Check if running in a Linux environment
-PLATFORM=$(uname)
+# If PLATFORM environment variable is not set, use uname command to detect
+if [ -z "$PLATFORM" ]; then
+    PLATFORM=$(uname)
+fi
+
+echo "Detected platform: $PLATFORM"
 
 if [[ "$PLATFORM" == "Linux" ]]; then
     echo "Detected Linux environment, using dedicated configuration script..."
@@ -30,7 +35,7 @@ EOF
     echo "Updated k8s-manifests/mqtt-config.yaml file"
     echo "MQTT_BROKER_HOST set to: $HOST_IP"
 
-    # Export environment variables for use by database initialization scripts
+    # Export environment variable for database initialization script
     export MQTT_HOST=$HOST_IP
-    echo "Exported environment variables MQTT_HOST=$HOST_IP"
+    echo "Exported environment variable MQTT_HOST=$HOST_IP"
 fi
