@@ -1,5 +1,5 @@
 use petgraph::graph::NodeIndex;
-use rust_listener::{graph, setup_database_connection, EnvFilter, nodes::NodeType};
+use rust_listener::{graph, setup_database_connection, EnvFilter, nodes::NodeType, entities::sea_orm_active_enums::IotFieldType};
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use std::{sync::Arc, time::Duration, collections::HashMap};
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -67,23 +67,63 @@ async fn main() -> anyhow::Result<()> {
             
             for node_index in &trigger_indices {
                 if let Some(node) = graph_read.node_weight(*node_index) {
-                    // Check if this is a source node and collect its data
-                    if let NodeType::Source(source_node) = node.concrete_node() {
-                        match source_node.get_source_data() {
-                            Ok(data) => {
-                                match serde_json::to_value(data) {
-                                    Ok(json_data) => {
-                                        source_data_map.insert(node.id().to_string(), json_data);
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to serialize source data for node {}: {:?}", node.id(), e);
+                    match node.concrete_node() {
+                        // Check if this is a source node and collect its data
+                        NodeType::Source(source_node) => {
+                            match source_node.get_source_data() {
+                                Ok(data) => {
+                                    match serde_json::to_value(data) {
+                                        Ok(json_data) => {
+                                            source_data_map.insert(node.id().to_string(), json_data);
+                                        }
+                                        Err(e) => {
+                                            error!("Failed to serialize source data for node {}: {:?}", node.id(), e);
+                                        }
                                     }
                                 }
-                            }
-                            Err(e) => {
-                                error!("Failed to get source data for node {}: {:?}", node.id(), e);
+                                Err(e) => {
+                                    error!("Failed to get source data for node {}: {:?}", node.id(), e);
+                                }
                             }
                         }
+                        // Check if this is a datalake node and collect its data
+                        NodeType::Datalake(datalake_node) => {
+                            let reading_lock = datalake_node.get_reading();
+                            match reading_lock.read() {
+                                Ok(guard) => {
+                                    if let Some(reading_store) = guard.as_ref() {
+                                        let (sensor, readings) = reading_store.clone();
+                                        let node_data = crate::graph::types::NodeData::Collection(
+                                            readings.into_iter().map(|reading| {
+                                                match sensor.value_type {
+                                                    IotFieldType::String => {
+                                                        serde_json::json!(reading.raw_value.clone())
+                                                    }
+                                                    IotFieldType::Number => {
+                                                        serde_json::json!(reading.value)
+                                                    }
+                                                    IotFieldType::Boolean => {
+                                                        serde_json::json!(reading.raw_value == "true")
+                                                    }
+                                                }
+                                            }).collect()
+                                        );
+                                        match serde_json::to_value(node_data) {
+                                            Ok(json_data) => {
+                                                source_data_map.insert(node.id().to_string(), json_data);
+                                            }
+                                            Err(e) => {
+                                                error!("Failed to serialize datalake data for node {}: {:?}", node.id(), e);
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("Failed to read datalake data for node {}: {:?}", node.id(), e);
+                                }
+                            };
+                        }
+                        _ => {}
                     }
                 }
             }
