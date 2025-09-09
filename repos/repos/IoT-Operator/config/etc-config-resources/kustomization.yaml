@@ -1,0 +1,13 @@
+configMapGenerator:
+- name: listener-operator-config
+  files:
+  - etc-config/COLLECTOR_IMAGE
+  - etc-config/HOST_ALIASES
+  - etc-config/IMAGE_PULL_POLICY
+  - etc-config/IMAGE_PULL_SECRET
+  - etc-config/POD_ANNOTATIONS
+  - etc-config/PROCESSOR_IMAGE
+  - etc-config/RELEASE_NAME
+
+resources:
+- secret.yaml
