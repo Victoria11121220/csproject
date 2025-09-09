@@ -43,6 +43,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	// PostgreSQL driver
+	"github.com/lib/pq"
 	_ "github.com/lib/pq"
 
 	iotv1alpha1 "visualiseinfo.com/m/api/v1alpha1"
@@ -152,32 +153,125 @@ func ReadConfig() Config {
 }
 
 // listenForNewFlows listens for new flows in the iot_flow table using PostgreSQL LISTEN/NOTIFY
-func listenForNewFlows(ctx context.Context, db *sql.DB, reconciler *controller.IoTListenerRequestReconciler) {
+func listenForNewFlows(ctx context.Context, db *sql.DB, postgresURI string, reconciler *controller.IoTListenerRequestReconciler) {
 	setupLog.Info("Starting to listen for new flows in iot_flow table...")
 
+	// Create a dedicated listener connection for PostgreSQL NOTIFY
+	// The minimum and maximum reconnect intervals are set to reasonable defaults
+	minReconnectInterval := 10 * time.Second
+	maxReconnectInterval := time.Minute
+	
+	// Create a new listener - we need a separate connection for LISTEN/NOTIFY
+	listener := pq.NewListener(postgresURI+"?sslmode=disable", minReconnectInterval, maxReconnectInterval, nil)
+	defer listener.Close()
+
 	// Listen for notifications on the 'iot_flow_insert' channel
-	_, err := db.Exec("LISTEN iot_flow_insert")
+	err := listener.Listen("iot_flow_insert")
 	if err != nil {
 		setupLog.Error(err, "unable to listen for notifications")
 		return
 	}
 
-	// Use Polling approach since LISTEN/NOTIFY with pq driver requires a dedicated connection
+	setupLog.Info("Successfully started listening for PostgreSQL notifications on channel 'iot_flow_insert'")
+
+	// Process notifications in a separate goroutine
 	for {
 		select {
 		case <-ctx.Done():
+			setupLog.Info("Stopping listener for new flows")
 			return
-		default:
-			// Check for new flows by querying the database
-			processNewFlows(ctx, db, reconciler)
-
-			// Sleep for a bit before checking again
-			time.Sleep(10 * time.Second)
+		case notification := <-listener.Notify:
+			if notification != nil {
+				setupLog.Info("Received notification", "channel", notification.Channel, "payload", notification.Extra)
+				// Process the new flow when we receive a notification
+				processNewFlowsByNotification(ctx, db, reconciler, notification.Extra)
+			}
+		case <-time.After(90 * time.Second):
+			// Periodically ping the database to keep the connection alive
+			setupLog.Info("Pinging database to keep connection alive")
+			listener.Ping()
 		}
 	}
 }
 
-// processNewFlows processes new flows from the iot_flow table
+// processNewFlowsByNotification processes a new flow from the iot_flow table based on notification
+func processNewFlowsByNotification(ctx context.Context, db *sql.DB, reconciler *controller.IoTListenerRequestReconciler, flowIDStr string) {
+	// Convert the flow ID from the notification payload
+	setupLog.Info("Processing new flow from notification", "flowIDStr", flowIDStr)
+
+	// Query for the specific flow that was inserted
+	query := "SELECT id, nodes, edges FROM iot_flow WHERE id = $1"
+	row := db.QueryRowContext(ctx, query, flowIDStr)
+
+	var flowID int
+	var nodes, edges string
+	err := row.Scan(&flowID, &nodes, &edges)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			setupLog.Info("Flow not found in iot_flow table", "flowID", flowIDStr)
+			return
+		}
+		setupLog.Error(err, "unable to query flow", "flowID", flowIDStr)
+		return
+	}
+
+	setupLog.Info("Processing new flow", "flowID", flowID)
+
+	// Start collector and processor pods
+	err = reconciler.StartCollectorAndProcessor(ctx, flowID, nodes, edges)
+	if err != nil {
+		setupLog.Error(err, "unable to start collector and processor pods", "flowID", flowID)
+		return
+	}
+
+	setupLog.Info("Successfully started collector and processor pods", "flowID", flowID)
+}
+
+// processExistingFlows processes all existing flows from the iot_flow table at startup
+func processExistingFlows(ctx context.Context, db *sql.DB, reconciler *controller.IoTListenerRequestReconciler) {
+	setupLog.Info("Processing all existing flows in iot_flow table...")
+
+	// Query for all flows in the table
+	query := "SELECT id, nodes, edges FROM iot_flow ORDER BY created_at ASC"
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		setupLog.Error(err, "unable to query existing flows")
+		return
+	}
+	defer rows.Close()
+
+	// Process each flow
+	for rows.Next() {
+		var flowID int
+		var nodes, edges string
+		err := rows.Scan(&flowID, &nodes, &edges)
+		if err != nil {
+			setupLog.Error(err, "unable to scan flow row")
+			continue
+		}
+
+		setupLog.Info("Processing existing flow", "flowID", flowID)
+
+		// Start collector and processor pods for each flow
+		err = reconciler.StartCollectorAndProcessor(ctx, flowID, nodes, edges)
+		if err != nil {
+			setupLog.Error(err, "unable to start collector and processor pods for existing flow", "flowID", flowID)
+			// Continue processing other flows even if one fails
+			continue
+		}
+
+		setupLog.Info("Successfully started collector and processor pods for existing flow", "flowID", flowID)
+	}
+
+	// Check for errors during iteration
+	if err = rows.Err(); err != nil {
+		setupLog.Error(err, "error iterating over flow rows")
+	}
+
+	setupLog.Info("Finished processing all existing flows")
+}
+
+// processNewFlows processes new flows from the iot_flow table (fallback method)
 func processNewFlows(ctx context.Context, db *sql.DB, reconciler *controller.IoTListenerRequestReconciler) {
 	// Query for flows that have not been processed yet
 	// For simplicity, we'll just get the latest flow
@@ -346,8 +440,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Process all existing flows at startup
+	processExistingFlows(context.Background(), db, reconciler)
+
 	// Start listening for new flows in a separate goroutine
-	go listenForNewFlows(context.Background(), db, reconciler)
+	go listenForNewFlows(context.Background(), db, string(postgres_uri), reconciler)
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
