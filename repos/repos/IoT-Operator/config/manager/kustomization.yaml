@@ -1,11 +1,8 @@
-# config/manager/kustomization.yaml
 resources:
 - manager.yaml
-- operator-configmap.yaml
-- operator-secret.yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 images:
 - name: controller
   newName: listener-operator
-  newTag: latest
+  newTag: dev
