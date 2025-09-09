@@ -22,3 +22,9 @@ resources:
 # if you do not want those helpers be installed with your Project.
 - iotlistenerrequest_editor_role.yaml
 - iotlistenerrequest_viewer_role.yaml
+
+patches:
+- path: role_binding_patch.yaml
+  target:
+    kind: ClusterRoleBinding
+    name: manager-rolebinding
