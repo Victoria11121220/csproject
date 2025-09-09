@@ -7,7 +7,7 @@ MQTT_HOST=${MQTT_HOST:-host.docker.internal}
 
 echo "Using MQTT host address: $MQTT_HOST"
 
-# Waiting for the PostgreSQL Pod to start
+# Wait for PostgreSQL Pod to start
 echo "Waiting for PostgreSQL Pod to start..."
 kubectl wait --for=condition=ready pod -l app=postgres --timeout=120s
 
@@ -59,7 +59,7 @@ BEGIN
     END IF;
 END \$\$;
 
--- Create site table
+-- Create the site table
 CREATE TABLE IF NOT EXISTS site (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS site (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Create iot_flow table
+-- Create the iot_flow table
 CREATE TABLE IF NOT EXISTS iot_flow (
     id SERIAL PRIMARY KEY,
     site_id INTEGER NOT NULL REFERENCES site(id),
@@ -177,7 +177,7 @@ CREATE TRIGGER iot_flow_insert_trigger
     FOR EACH ROW
     EXECUTE FUNCTION notify_iot_flow_insert();
 
--- Add a primary key constraint if one does not exist
+-- Add primary key constraint if not exists
 DO \$\$ 
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'iot_flow_name_key') THEN
@@ -193,8 +193,8 @@ VALUES (1, 'Test Site', 'A site for testing purposes',
         '{"zoom": 12, "center": [40.7128, -74.0060]}')
 ON CONFLICT (id) DO NOTHING;
 
--- Insert a line from dotenv-listener/.env as the initial line of the iot_flow table
--- Set the MQTT host address using environment variables or default values
+-- Insert a row from dotenv-listener/.env as the initial row for the iot_flow table
+-- Use environment variables or default values to set the MQTT host address
 INSERT INTO iot_flow (id, site_id, name, nodes, edges) 
 VALUES (1, 1, 'Initial Flow', 
         ('[{"id": "mqtt_source_1", "type": "source", "data": {"source": {"type": "MQTT", "config": {"host": "' || '${MQTT_HOST}' || '", "port": 1883}}, "config": {"topic": "sensors/temperature"}}}, {"id":"debug-1","type":"debug","data":{}}]')::jsonb, 
