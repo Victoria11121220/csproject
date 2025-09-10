@@ -25,6 +25,7 @@ async fn test_complete_data_flow() {
     source_data.insert("mock-source".to_string(), json!({"temperature": 22.5, "humidity": 65.0}));
     
     let trigger_data = TriggerData {
+        flow_id: 0,
         indices,
         source_data,
     };
@@ -256,6 +257,7 @@ async fn test_trigger_data_serialization() {
     source_data.insert("node1".to_string(), json!({"temperature": 22.5}));
     
     let trigger_data = TriggerData {
+        flow_id: 0,
         indices,
         source_data,
     };
