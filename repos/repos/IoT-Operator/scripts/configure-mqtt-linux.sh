@@ -2,15 +2,15 @@
 
 # Dedicated script for configuring MQTT addresses for Linux environments
 
-echo "Configuring MQTT addresses for Linux environments..."
+echo "Configuring MQTT addresses for Linux environment..."
 
 # In Linux environments, we use several methods to detect the host IP
 
-# Method 1: Check Docker network
+# Method 1: Use Docker network inspection
 HOST_IP=""
 if command -v docker &> /dev/null; then
     echo "Checking Docker network..."
-    # Find Kind Network
+    # Find kind network
     KIND_NETWORK=$(docker network ls | grep kind | awk '{print $1}' | head -n 1)
     
     if [ -n "$KIND_NETWORK" ]; then
@@ -19,30 +19,30 @@ if command -v docker &> /dev/null; then
         HOST_IP=$(docker network inspect $KIND_NETWORK | grep Gateway | head -1 | awk -F'"' '{print $4}')
         
         if [ -n "$HOST_IP" ]; then
-            echo "Obtained host IP from Docker network: $HOST_IP"
+            echo "Got host IP from Docker network: $HOST_IP"
         else
-            echo "Failed to obtain gateway IP from Docker network"
+            echo "Failed to get gateway IP from Docker network"
         fi
     else
         echo "Kind network not found"
     fi
 fi
 
-# Method 2: If method 1 fails, try using the routing table
+# Method 2: If Method 1 fails, try to use the routing table
 if [ -z "$HOST_IP" ]; then
-    echo "Using routing table to detect host IP..."
+    echo "Trying to detect host IP using routing table..."
     HOST_IP=$(ip route | grep default | awk '{print $3}' | head -n 1)
     
     if [ -n "$HOST_IP" ]; then
-        echo "Obtained host IP from routing table: $HOST_IP"
+        echo "Got host IP from routing table: $HOST_IP"
     else
-        echo "Failed to obtain default gateway from routing table"
+        echo "Failed to get default gateway from routing table"
     fi
 fi
 
-# Method 3: If both methods fail, try using 172.17.0.1 (Docker default bridge gateway)
+# Method 3: If all else fails, try using 172.17.0.1 (Docker default bridge gateway)
 if [ -z "$HOST_IP" ]; then
-    echo "Trying Docker default bridge gateway: 172.17.0.1"
+    echo "Trying to use Docker default bridge gateway: 172.17.0.1"
     HOST_IP="172.17.0.1"
     echo "Using default Docker bridge gateway: $HOST_IP"
 fi

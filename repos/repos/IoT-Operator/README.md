@@ -117,19 +117,25 @@ limitations under the License.
 
 
 ## Deployments:
-Deployment Instruction：
+Deployment Guide：
 - make docker-build IMG=listener-operator:dev：Build a local image
 - kind load docker-image listener-operator:dev --name listener-cluster：Load the local image into the cluster. In a production environment, this step needs to be changed to push
-- make install Install CRDs
-- make deploy IMG=listener-operator:dev Deploy
+- make install Installing CRDs
+- make deploy IMG=listener-operator:dev deploy
+
 
 namespace: listener-operator-system
 
+Test script:
+- k8s-manifests/insert-test-flow.sh：Insert a new test flow record into the iot_flow table to verify the monitoring function of the Operator
+- k8s-manifests/check-operator-trigger.sh：Check whether the Operator correctly listens to the new flow record and creates the corresponding Pods
 
 Refactored workflow：
 
-1. After the Operator is started, it checks for new rows in the iot_flow table through the PostgreSQL polling mechanism (a LISTEN/NOTIFY mechanism will be implemented in the future)
-2. When a new row is detected, the Operator pulls two images: iot-collector:latest and iot-processor:latest. These two images are used to replace the original LISTENER-related images and environment variables.
+1. After the Operator is started, it listens for new rows in the iot_flow table through the PostgreSQL LISTEN/NOTIFY mechanism.
+2. When a new row is detected, the Operator checks whether the corresponding collector and processor Pods exist：
+   - If Pods does not exist, the Operator will pull up two images: iot-collector:latest和iot-processor:latest
+   - If the Pods already exist, the Operator sends a graph update message to the FLOW_UPDATES_TOPIC topic via Kafka.
 3. The database initialization script (k8s-manifests/init-postgres.sh) initializes the data tables in PostgreSQL and creates triggers to support the NOTIFY mechanism.
 4. All major changes should be committed so they can be rolled back
 5. The containers in the listener-operator-system namespace are configured with hostAliases to access ports on the host machine, such as 1883 for receiving external MQTT sources.

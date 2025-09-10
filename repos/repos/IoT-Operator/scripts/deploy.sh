@@ -2,7 +2,7 @@
 
 # IoT-Operator deployment script
 
-echo "Start deployment IoT-Operator..."
+echo "Starting deployment of IoT-Operator..."
 
 make generate
 # 1. Build Docker image
@@ -41,6 +41,7 @@ kubectl wait --for=condition=ready pod -l app=kafka --timeout=120s -n listener-o
 # 8. Create Kafka Topic
 echo "8. Create Kafka Topic..."
 kubectl exec -n listener-operator-system $(kubectl get pods -n listener-operator-system -l app=kafka -o name) -- kafka-topics.sh --create --topic iot_triggers --bootstrap-server localhost:9092 --if-not-exists
+kubectl exec -n listener-operator-system $(kubectl get pods -n listener-operator-system -l app=kafka -o name) -- kafka-topics.sh --create --topic flow-updates --bootstrap-server localhost:9092 --if-not-exists
 
 # 9. Automatically detect and update MQTT configuration
 echo "9. Automatically detect and update MQTT configuration..."
@@ -55,14 +56,14 @@ kubectl apply -f k8s-manifests/mqtt-config.yaml -n listener-operator-system
 echo "11. Wait for PostgreSQL to be ready..."
 kubectl wait --for=condition=ready pod -l app=postgres --timeout=120s
 
-# 12. Initialize the PostgreSQL database
-echo "12. Initialize the PostgreSQL database..."
+# 12. Initialize PostgreSQL database
+echo "12. Initialize PostgreSQL database..."
 ./k8s-manifests/init-postgres.sh
 
-# 13. Create IoTListenerRequest instance (optional, for testing old CRD mechanism)
-echo "13. Create IoTListenerRequest instance..."
+# 13. Create IoTListenerRequest instances (optional, for testing old CRD mechanism)
+echo "13. Create IoTListenerRequest instances..."
 kubectl apply -k config/samples/
 
-echo "Deployment completed!"
+echo "Deployment complete!"
 echo "Check Pod status: kubectl get pods -n listener-operator-system"
 echo "View Operator logs: kubectl logs -n listener-operator-system -l control-plane=controller-manager"
