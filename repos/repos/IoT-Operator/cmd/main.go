@@ -22,6 +22,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"flag"
+	"fmt"
+	"strings"
 
 	"os"
 	"time"
@@ -45,6 +47,9 @@ import (
 	// PostgreSQL driver
 	"github.com/lib/pq"
 	_ "github.com/lib/pq"
+
+	// Kafka client
+	kafka "github.com/segmentio/kafka-go"
 
 	iotv1alpha1 "visualiseinfo.com/m/api/v1alpha1"
 	"visualiseinfo.com/m/internal/controller"
@@ -152,6 +157,34 @@ func ReadConfig() Config {
 	return config
 }
 
+// createKafkaProducer creates a Kafka producer using the configuration from the iot-env-config ConfigMap
+func createKafkaProducer() (*kafka.Writer, error) {
+	// Get Kafka brokers from environment or config
+	brokers := os.Getenv("KAFKA_BROKERS")
+	if brokers == "" {
+		// Try to read from config file as fallback
+		brokersBytes, err := os.ReadFile("./etc/config/KAFKA_BROKERS")
+		if err != nil {
+			return nil, fmt.Errorf("unable to read KAFKA_BROKERS from environment or file: %v", err)
+		}
+		brokers = strings.TrimSpace(string(brokersBytes))
+	}
+
+	// Validate that we have brokers
+	if brokers == "" {
+		return nil, fmt.Errorf("KAFKA_BROKERS is not set in environment or config file")
+	}
+
+	// Create Kafka writer (producer)
+	writer := kafka.Writer{
+		Addr:         kafka.TCP(brokers),
+		Balancer:     &kafka.LeastBytes{},
+		RequiredAcks: kafka.RequireAll,
+	}
+
+	return &writer, nil
+}
+
 // listenForNewFlows listens for new flows in the iot_flow table using PostgreSQL LISTEN/NOTIFY
 func listenForNewFlows(ctx context.Context, db *sql.DB, postgresURI string, reconciler *controller.IoTListenerRequestReconciler) {
 	setupLog.Info("Starting to listen for new flows in iot_flow table...")
@@ -160,7 +193,7 @@ func listenForNewFlows(ctx context.Context, db *sql.DB, postgresURI string, reco
 	// The minimum and maximum reconnect intervals are set to reasonable defaults
 	minReconnectInterval := 10 * time.Second
 	maxReconnectInterval := time.Minute
-	
+
 	// Create a new listener - we need a separate connection for LISTEN/NOTIFY
 	listener := pq.NewListener(postgresURI+"?sslmode=disable", minReconnectInterval, maxReconnectInterval, nil)
 	defer listener.Close()
@@ -217,14 +250,14 @@ func processNewFlowsByNotification(ctx context.Context, db *sql.DB, reconciler *
 
 	setupLog.Info("Processing new flow", "flowID", flowID)
 
-	// Start collector and processor pods
+	// Start collector and processor pods (singleton) - this will send the flow data via Kafka
 	err = reconciler.StartCollectorAndProcessor(ctx, flowID, nodes, edges)
 	if err != nil {
 		setupLog.Error(err, "unable to start collector and processor pods", "flowID", flowID)
 		return
 	}
 
-	setupLog.Info("Successfully started collector and processor pods", "flowID", flowID)
+	setupLog.Info("Successfully processed new flow", "flowID", flowID)
 }
 
 // processExistingFlows processes all existing flows from the iot_flow table at startup
@@ -240,7 +273,8 @@ func processExistingFlows(ctx context.Context, db *sql.DB, reconciler *controlle
 	}
 	defer rows.Close()
 
-	// Process each flow
+	// Process each flow - but only start the collector and processor once
+	firstFlow := true
 	for rows.Next() {
 		var flowID int
 		var nodes, edges string
@@ -252,15 +286,20 @@ func processExistingFlows(ctx context.Context, db *sql.DB, reconciler *controlle
 
 		setupLog.Info("Processing existing flow", "flowID", flowID)
 
-		// Start collector and processor pods for each flow
+		// Start collector and processor pods (singleton) - this will either create the pods or send flow data via Kafka
 		err = reconciler.StartCollectorAndProcessor(ctx, flowID, nodes, edges)
 		if err != nil {
-			setupLog.Error(err, "unable to start collector and processor pods for existing flow", "flowID", flowID)
+			setupLog.Error(err, "unable to process existing flow", "flowID", flowID)
 			// Continue processing other flows even if one fails
 			continue
 		}
 
-		setupLog.Info("Successfully started collector and processor pods for existing flow", "flowID", flowID)
+		if firstFlow {
+			setupLog.Info("Started collector and processor pods for first flow", "flowID", flowID)
+			firstFlow = false
+		} else {
+			setupLog.Info("Sent flow update to existing collector and processor pods", "flowID", flowID)
+		}
 	}
 
 	// Check for errors during iteration
@@ -269,37 +308,6 @@ func processExistingFlows(ctx context.Context, db *sql.DB, reconciler *controlle
 	}
 
 	setupLog.Info("Finished processing all existing flows")
-}
-
-// processNewFlows processes new flows from the iot_flow table (fallback method)
-func processNewFlows(ctx context.Context, db *sql.DB, reconciler *controller.IoTListenerRequestReconciler) {
-	// Query for flows that have not been processed yet
-	// For simplicity, we'll just get the latest flow
-	query := "SELECT id, nodes, edges FROM iot_flow ORDER BY created_at DESC LIMIT 1"
-	row := db.QueryRowContext(ctx, query)
-
-	var flowID int
-	var nodes, edges string
-	err := row.Scan(&flowID, &nodes, &edges)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			setupLog.Info("No flows found in iot_flow table")
-			return
-		}
-		setupLog.Error(err, "unable to query latest flow")
-		return
-	}
-
-	setupLog.Info("Processing new flow", "flowID", flowID)
-
-	// Start collector and processor pods
-	err = reconciler.StartCollectorAndProcessor(ctx, flowID, nodes, edges)
-	if err != nil {
-		setupLog.Error(err, "unable to start collector and processor pods")
-		return
-	}
-
-	setupLog.Info("Successfully started collector and processor pods", "flowID", flowID)
 }
 
 func main() {
@@ -424,6 +432,24 @@ func main() {
 		HostAliases:     config.HostAliases,
 		PodAnnotations:  config.Annotations,
 	}
+
+	// Create Kafka producer and set it in the reconciler
+	kafkaProducer, err := createKafkaProducer()
+	if err != nil {
+		setupLog.Error(err, "unable to create Kafka producer")
+		os.Exit(1)
+	}
+	reconciler.KafkaProducer = kafkaProducer
+
+	// Read Kafka topic from config file
+	kafkaTopic := "flow-updates" // default value
+	kafkaTopicBytes, err := os.ReadFile("./etc/config/FLOW_UPDATES_TOPIC")
+	if err != nil {
+		setupLog.Info("unable to read FLOW_UPDATES_TOPIC from config file, using default", "error", err)
+	} else {
+		kafkaTopic = strings.TrimSpace(string(kafkaTopicBytes))
+	}
+	reconciler.KafkaTopic = kafkaTopic
 
 	if err = reconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "IoTListenerRequest")
