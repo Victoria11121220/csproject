@@ -16,13 +16,14 @@ extern crate rocket;
 extern crate paho_mqtt as mqtt;
 
 // Re-export commonly used items for convenience in binaries
-pub use graph::build_graph::read_graph;
+pub use graph::build_graph::{read_graph, from_flow};
+pub use graph::flow_updates::{FlowUpdateMessage, FlowGraphs, create_flow_graphs, update_flow_graph, get_flow_graph};
 pub use entities::reading::Model as Reading;
 pub use sea_orm::{ Database, DatabaseConnection, DbErr };
 pub use std::env;
 pub use tracing;
 pub use tracing_subscriber::{ self, EnvFilter };
-pub use utils::subscribe::subscribe_to_sources;
+pub use utils::subscribe::{subscribe_to_sources, SubscribeError};
 
 /// Get the database connection from the `uri` environment variable.
 pub async fn setup_database_connection() -> Result<DatabaseConnection, DbErr> {

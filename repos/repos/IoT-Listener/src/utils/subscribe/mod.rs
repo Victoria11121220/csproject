@@ -17,10 +17,44 @@ use crate::{
 mod database;
 mod sources;
 
+// Define a custom error type that is Send + Sync
+#[derive(Debug)]
+pub enum SubscribeError {
+	Generic(String),
+}
+
+impl std::fmt::Display for SubscribeError {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			SubscribeError::Generic(msg) => write!(f, "{}", msg),
+		}
+	}
+}
+
+impl std::error::Error for SubscribeError {}
+
+impl From<Box<dyn std::error::Error>> for SubscribeError {
+	fn from(error: Box<dyn std::error::Error>) -> Self {
+		SubscribeError::Generic(error.to_string())
+	}
+}
+
+impl From<String> for SubscribeError {
+	fn from(error: String) -> Self {
+		SubscribeError::Generic(error)
+	}
+}
+
+impl From<ThreadSafeError> for SubscribeError {
+	fn from(error: ThreadSafeError) -> Self {
+		SubscribeError::Generic(error.to_string())
+	}
+}
+
 type SubscribeThreadResult = Result<JoinHandle<()>, ThreadSafeError>;
 type SourcesSubscriptionResult = Result<
 	(Vec<JoinHandle<()>>, UnboundedReceiver<Vec<NodeIndex>>),
-	Box<dyn std::error::Error>
+	SubscribeError
 >;
 
 /// Reports an error to prometheus and sleeps for a given time
