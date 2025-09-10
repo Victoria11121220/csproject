@@ -4,7 +4,7 @@ use edge::Edge;
 use node::{ Node, NodeError, NodeResult };
 use concrete_node::ConcreteNode;
 use petgraph::{ graph::{ DiGraph, NodeIndex }, visit::EdgeRef };
-use std::{ collections::{ HashMap, HashSet }, ops::Deref };
+use std::{ collections::{ HashMap, HashSet }, ops::Deref, sync::Arc };
 use tokio::sync::RwLock;
 use types::GraphPayload;
 use utils::{
@@ -19,6 +19,7 @@ pub mod edge;
 pub mod node;
 pub mod trigger_data;
 pub mod types;
+pub mod flow_updates;
 mod utils;
 
 pub type PropagationError = (NodeIndex, NodeError);
@@ -28,16 +29,16 @@ pub type PropagationError = (NodeIndex, NodeError);
 /// The graph is backed by a [`petgraph::graph::DiGraph`] and contains additional information about the graph structure.
 /// It also wraps the graph in a [`tokio::sync::RwLock`] to allow for concurrent reads and writes.
 /// require_backprop includes all nodes that need to be recomputed on every backpropagation. This is to ensure nodes such as current timestamp are always recomputed.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RwLockGraph {
-	graph: RwLock<DiGraph<Node, Edge>>,
+	pub graph: Arc<RwLock<DiGraph<Node, Edge>>>,
 	sinks: HashSet<NodeIndex>,
 	output_generators: HashSet<NodeIndex>,
 	require_backprop: HashSet<NodeIndex>,
 }
 
 impl Deref for RwLockGraph {
-	type Target = RwLock<DiGraph<Node, Edge>>;
+	type Target = Arc<RwLock<DiGraph<Node, Edge>>>;
 
 	fn deref(&self) -> &Self::Target {
 		&self.graph
@@ -368,7 +369,7 @@ mod tests {
 		graph.add_edge(trigger, second_idx, edge1.unwrap());
 		graph.add_edge(second_idx, sink, edge2.unwrap());
 		let mut rwlock_graph = RwLockGraph {
-			graph: RwLock::new(graph),
+			graph: Arc::new(RwLock::new(graph)),
 			sinks: HashSet::from([sink]),
 			output_generators: HashSet::from([sink]),
 			require_backprop: HashSet::new(),

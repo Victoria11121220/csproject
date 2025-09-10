@@ -7,6 +7,7 @@ use super::RwLockGraph;
 use petgraph::graph::DiGraph;
 use std::collections::{ HashMap, HashSet };
 use std::env;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// Generate a graph form a JSON string of nodes and edges.
@@ -18,7 +19,7 @@ use tokio::sync::RwLock;
 /// - If a source or target node for an edge is not found
 /// - Edge or node deserialization
 /// - Any error from [`Node::set_actual_handles`] for handle validation
-fn from_flow(nodes_str: &str, edges_str: &str) -> Result<RwLockGraph, Box<dyn std::error::Error>> {
+pub fn from_flow(nodes_str: &str, edges_str: &str) -> Result<RwLockGraph, Box<dyn std::error::Error + Send + Sync>> {
 	let nodes: Vec<Node> = serde_json::from_str(nodes_str)?;
 	let mut edges: Vec<Edge> = serde_json::from_str(edges_str)?;
 	// For duplicate target handles (i.e. multiple edges to the same target handle),
@@ -111,7 +112,7 @@ fn from_flow(nodes_str: &str, edges_str: &str) -> Result<RwLockGraph, Box<dyn st
 		.collect::<HashSet<_>>();
 
 	Ok(RwLockGraph {
-		graph: RwLock::new(graph),
+		graph: Arc::new(RwLock::new(graph)),
 		sinks,
 		output_generators,
 		require_backprop,
@@ -128,11 +129,11 @@ fn from_flow(nodes_str: &str, edges_str: &str) -> Result<RwLockGraph, Box<dyn st
 ///
 /// Returns:
 /// A tuple of the flow ID and the graph
-pub fn read_graph() -> Result<(i32, RwLockGraph), Box<dyn std::error::Error>> {
+pub fn read_graph() -> Result<(i32, RwLockGraph), Box<dyn std::error::Error + Send + Sync>> {
 	// Log all environment variables
-	let nodes: String = env::var("nodes").expect("`nodes` must be set");
-	let edges: String = env::var("edges").expect("`edges` must be set");
-	let flow_id: String = env::var("flow_id").expect("`flow_id` must be set");
+	let nodes: String = env::var("nodes").unwrap_or("[]".into());
+	let edges: String = env::var("edges").unwrap_or("[]".into());
+	let flow_id: String = env::var("flow_id").unwrap_or("0".into());
 	let flow_id = flow_id.trim().parse::<i32>()?;
 	let graph = from_flow(&nodes, &edges)?;
 
