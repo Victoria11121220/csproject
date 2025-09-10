@@ -7,3 +7,4 @@ data:
   KAFKA_BROKERS: "kafka:9092"
   KAFKA_TOPIC: "iot_triggers"
   KAFKA_GROUP_ID: "iot_processor_group"
+  FLOW_UPDATES_TOPIC: "flow-updates"

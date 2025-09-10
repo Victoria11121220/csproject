@@ -2,7 +2,7 @@
 
 # Script to initialize all postgres tables in k8s
 
-# Get MQTT host address, use default if not set
+# Get MQTT host address, use default value if environment variable is not set
 MQTT_HOST=${MQTT_HOST:-host.docker.internal}
 
 echo "Using MQTT host address: $MQTT_HOST"
@@ -59,7 +59,7 @@ BEGIN
     END IF;
 END \$\$;
 
--- Create the site table
+-- Create site table
 CREATE TABLE IF NOT EXISTS site (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS site (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Create the iot_flow table
+-- Create iot_flow table
 CREATE TABLE IF NOT EXISTS iot_flow (
     id SERIAL PRIMARY KEY,
     site_id INTEGER NOT NULL REFERENCES site(id),
@@ -170,14 +170,14 @@ BEGIN
 END;
 \$\$ LANGUAGE plpgsql;
 
--- Create a trigger to send a notification when a new row is inserted into the iot_flow table
+-- Create a trigger to send notifications when a new row is inserted into the iot_flow table
 DROP TRIGGER IF EXISTS iot_flow_insert_trigger ON iot_flow;
 CREATE TRIGGER iot_flow_insert_trigger
     AFTER INSERT ON iot_flow
     FOR EACH ROW
     EXECUTE FUNCTION notify_iot_flow_insert();
 
--- Add primary key constraint if not exists
+-- Add primary key constraint if it does not exist
 DO \$\$ 
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'iot_flow_name_key') THEN

@@ -9,7 +9,7 @@ You may obtain a copy of the License at
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUTHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
@@ -19,7 +19,8 @@ package controller
 import (
 	"context"
 	"database/sql"
-	"strconv"
+	"encoding/json"
+	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,12 +30,26 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	iotv1alpha1 "visualiseinfo.com/m/api/v1alpha1"
+
+	// Kafka client
+	kafka "github.com/segmentio/kafka-go"
 )
 
 const (
 	CollectorImageName = "iot-collector"
 	ProcessorImageName = "iot-processor"
+
+	// Fixed pod names for singleton collector and processor
+	CollectorPodName = "iot-collector"
+	ProcessorPodName = "iot-processor"
 )
+
+// FlowUpdateMessage represents a message sent to Kafka when a flow is updated
+type FlowUpdateMessage struct {
+	FlowID int    `json:"flow_id"`
+	Nodes  string `json:"nodes"`
+	Edges  string `json:"edges"`
+}
 
 // IoTListenerRequestReconciler reconciles a IoTListenerRequest object
 type IoTListenerRequestReconciler struct {
@@ -49,13 +64,15 @@ type IoTListenerRequestReconciler struct {
 	HostAliases     []corev1.HostAlias
 	PodAnnotations  map[string]string
 	DB              *sql.DB
+	KafkaProducer   *kafka.Writer
+	KafkaTopic      string
 }
 
-// Function to create a Collector Pod
-func (r *IoTListenerRequestReconciler) createCollectorPod(flowID int, nodes, edges string) *corev1.Pod {
+// Function to create a Collector Pod (singleton)
+func (r *IoTListenerRequestReconciler) createCollectorPod() *corev1.Pod {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "iot-collector-" + strconv.Itoa(flowID),
+			Name:      CollectorPodName,
 			Namespace: "listener-operator-system",
 			Labels: map[string]string{
 				"app": "iot-collector",
@@ -64,24 +81,12 @@ func (r *IoTListenerRequestReconciler) createCollectorPod(flowID int, nodes, edg
 		},
 		Spec: corev1.PodSpec{
 			ServiceAccountName: "listener-operator-controller-manager",
-			HostAliases:      r.HostAliases,
+			HostAliases:        r.HostAliases,
 			Containers: []corev1.Container{
 				{
 					Name:  CollectorImageName,
 					Image: r.CollectorImage,
 					Env: []corev1.EnvVar{
-						{
-							Name:  "flow_id",
-							Value: strconv.Itoa(flowID),
-						},
-						{
-							Name:  "nodes",
-							Value: nodes,
-						},
-						{
-							Name:  "edges",
-							Value: edges,
-						},
 						{
 							Name:  "uri",
 							Value: r.DatabaseUri,
@@ -116,6 +121,17 @@ func (r *IoTListenerRequestReconciler) createCollectorPod(flowID int, nodes, edg
 										Name: "iot-env-config",
 									},
 									Key: "KAFKA_GROUP_ID",
+								},
+							},
+						},
+						{
+							Name: "FLOW_UPDATES_TOPIC",
+							ValueFrom: &corev1.EnvVarSource{
+								ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: "iot-env-config",
+									},
+									Key: "FLOW_UPDATES_TOPIC",
 								},
 							},
 						},
@@ -157,11 +173,11 @@ func (r *IoTListenerRequestReconciler) createCollectorPod(flowID int, nodes, edg
 	return pod
 }
 
-// Function to create a Processor Pod
-func (r *IoTListenerRequestReconciler) createProcessorPod(flowID int, nodes, edges string) *corev1.Pod {
+// Function to create a Processor Pod (singleton)
+func (r *IoTListenerRequestReconciler) createProcessorPod() *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "iot-processor-" + strconv.Itoa(flowID),
+			Name:      ProcessorPodName,
 			Namespace: "listener-operator-system",
 			Labels: map[string]string{
 				"app": "iot-processor",
@@ -170,24 +186,12 @@ func (r *IoTListenerRequestReconciler) createProcessorPod(flowID int, nodes, edg
 		},
 		Spec: corev1.PodSpec{
 			ServiceAccountName: "listener-operator-controller-manager",
-			HostAliases: r.HostAliases,
+			HostAliases:        r.HostAliases,
 			Containers: []corev1.Container{
 				{
 					Name:  ProcessorImageName,
 					Image: r.ProcessorImage,
 					Env: []corev1.EnvVar{
-						{
-							Name:  "flow_id",
-							Value: strconv.Itoa(flowID),
-						},
-						{
-							Name:  "nodes",
-							Value: nodes,
-						},
-						{
-							Name:  "edges",
-							Value: edges,
-						},
 						{
 							Name:  "uri",
 							Value: r.DatabaseUri,
@@ -225,6 +229,17 @@ func (r *IoTListenerRequestReconciler) createProcessorPod(flowID int, nodes, edg
 								},
 							},
 						},
+						{
+							Name: "FLOW_UPDATES_TOPIC",
+							ValueFrom: &corev1.EnvVarSource{
+								ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: "iot-env-config",
+									},
+									Key: "FLOW_UPDATES_TOPIC",
+								},
+							},
+						},
 					},
 					ImagePullPolicy: r.PullPolicy,
 				},
@@ -256,27 +271,131 @@ func (r *IoTListenerRequestReconciler) Reconcile(ctx context.Context, req ctrl.R
 	return ctrl.Result{}, nil
 }
 
-// StartCollectorAndProcessor starts the collector and processor pods for a given flow
+// checkIfPodExists checks if a pod with the given name exists in the namespace and is healthy
+func (r *IoTListenerRequestReconciler) checkIfPodExists(ctx context.Context, podName string) (bool, error) {
+	pod := &corev1.Pod{}
+	err := r.Client.Get(ctx, client.ObjectKey{
+		Namespace: "listener-operator-system",
+		Name:      podName,
+	}, pod)
+
+	if err != nil {
+		// If the error is "not found", the pod doesn't exist
+		if client.IgnoreNotFound(err) == nil {
+			return false, nil
+		}
+		// For any other error, return the error
+		return false, err
+	}
+
+	// Pod exists, check if it's in a healthy state
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady {
+			if condition.Status == corev1.ConditionTrue {
+				return true, nil
+			}
+			break
+		}
+	}
+
+	// Also check container status
+	for _, containerStatus := range pod.Status.ContainerStatuses {
+		if containerStatus.RestartCount > 5 && containerStatus.LastTerminationState.Terminated != nil {
+			// If container has restarted many times and last state was terminated, consider it unhealthy
+			return false, nil
+		}
+	}
+
+	// Pod exists and appears healthy
+	return true, nil
+}
+
+// sendFlowUpdateToKafka sends a flow update message to Kafka
+func (r *IoTListenerRequestReconciler) sendFlowUpdateToKafka(flowID int, nodes, edges string) error {
+	// Create the flow update message
+	message := FlowUpdateMessage{
+		FlowID: flowID,
+		Nodes:  nodes,
+		Edges:  edges,
+	}
+
+	// Serialize the message to JSON
+	payload, err := json.Marshal(message)
+	if err != nil {
+		return err
+	}
+
+	// Send the message to Kafka
+	topic := r.KafkaTopic
+	if topic == "" {
+		topic = "flow-updates" // Default topic name
+	}
+
+	err = r.KafkaProducer.WriteMessages(context.Background(), kafka.Message{
+		Topic: topic,
+		Value: payload,
+	})
+
+	return err
+}
+
+// StartCollectorAndProcessor starts the collector and processor pods (singleton)
+// If the pods already exist, it sends an update message via Kafka
 func (r *IoTListenerRequestReconciler) StartCollectorAndProcessor(ctx context.Context, flowID int, nodes, edges string) error {
 	logger := log.FromContext(ctx)
 
-	// Create collector pod
-	collectorPod := r.createCollectorPod(flowID, nodes, edges)
-	err := r.Client.Create(ctx, collectorPod)
+	// Check if collector pod already exists and is healthy
+	collectorExists, err := r.checkIfPodExists(ctx, CollectorPodName)
 	if err != nil {
-		logger.Error(err, "Failed to create collector pod", "pod", collectorPod.Name)
+		logger.Error(err, "Failed to check if collector pod exists", "pod", CollectorPodName)
 		return err
 	}
-	logger.Info("Created collector pod", "pod", collectorPod.Name)
 
-	// Create processor pod
-	processorPod := r.createProcessorPod(flowID, nodes, edges)
-	err = r.Client.Create(ctx, processorPod)
+	// Check if processor pod already exists and is healthy
+	processorExists, err := r.checkIfPodExists(ctx, ProcessorPodName)
 	if err != nil {
-		logger.Error(err, "Failed to create processor pod", "pod", processorPod.Name)
+		logger.Error(err, "Failed to check if processor pod exists", "pod", ProcessorPodName)
 		return err
 	}
-	logger.Info("Created processor pod", "pod", processorPod.Name)
+
+	// If both pods exist and are healthy, send update via Kafka
+	if collectorExists && processorExists {
+		logger.Info("Both collector and processor pods already exist and are healthy, sending update via Kafka")
+		msg := fmt.Sprintf("flowID: %d; Nodes: %s; Edges: %s", flowID, nodes, edges)
+		logger.Info(msg)
+
+		err := r.sendFlowUpdateToKafka(flowID, nodes, edges)
+		if err != nil {
+			logger.Error(err, "Failed to send flow update to Kafka", "flowID", flowID)
+			return err
+		}
+		logger.Info("Successfully sent flow update to Kafka", "flowID", flowID)
+		return nil
+	}
+
+	// If collector pod doesn't exist, create it
+	if !collectorExists {
+		// Create new collector pod
+		collectorPod := r.createCollectorPod()
+		err = r.Client.Create(ctx, collectorPod)
+		if err != nil {
+			logger.Error(err, "Failed to create collector pod", "pod", collectorPod.Name)
+			return err
+		}
+		logger.Info("Created collector pod", "pod", collectorPod.Name)
+	}
+
+	// If processor pod doesn't exist, create it
+	if !processorExists {
+		// Create new processor pod
+		processorPod := r.createProcessorPod()
+		err = r.Client.Create(ctx, processorPod)
+		if err != nil {
+			logger.Error(err, "Failed to create processor pod", "pod", processorPod.Name)
+			return err
+		}
+		logger.Info("Created processor pod", "pod", processorPod.Name)
+	}
 
 	return nil
 }

@@ -8,6 +8,8 @@ configMapGenerator:
   - etc-config/POD_ANNOTATIONS
   - etc-config/PROCESSOR_IMAGE
   - etc-config/RELEASE_NAME
+  - etc-config/FLOW_UPDATES_TOPIC
+  - etc-config/KAFKA_BROKERS
 
 resources:
 - secret.yaml
