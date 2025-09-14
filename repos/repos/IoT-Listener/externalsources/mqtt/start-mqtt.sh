@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Start the MQTT source
+# Start MQTT Source
 
 echo "=== Starting MQTT Source ==="
 
@@ -18,19 +18,19 @@ then
     exit 1
 fi
 
-# Create the necessary directories
+# Create necessary directories
 mkdir -p mosquitto/data
 mkdir -p mosquitto/log
 
-# Start the MQTT broker
+# Start MQTT broker
 echo "Starting MQTT broker..."
 docker compose up -d
 
-# Wait for the broker to start
+# Wait for broker to start
 echo "Waiting for MQTT broker to start..."
 sleep 5
 
-# Check if the MQTT broker is running
+# Check if MQTT broker is running
 if docker ps | grep -q mqtt-broker; then
     echo "MQTT broker is running on localhost:1883"
     echo ""

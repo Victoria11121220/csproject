@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Publish test MQTT messages
+# Publish Test MQTT Messages
 
 echo "=== Publishing Test MQTT Messages ==="
 

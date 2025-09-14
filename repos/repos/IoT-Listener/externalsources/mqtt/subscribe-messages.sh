@@ -1,25 +1,17 @@
 #!/bin/bash
 
-# Stop MQTT Source
+# Subscribe to MQTT Messages
 
-echo "=== Stopping MQTT Source ==="
+echo "=== Subscribing to MQTT Messages ==="
+echo "Listening for messages on topic 'sensors/#' and 'devices/#'..."
+echo "Press Ctrl+C to stop."
 
-# Check if Docker is available
-if ! command -v docker &> /dev/null
+# Check if mosquitto-clients is installed
+if ! command -v mosquitto_sub &> /dev/null
 then
-    echo "Docker is not installed."
+    echo "mosquitto-clients not found. Please install mosquitto-clients first."
     exit 1
 fi
 
-# Check if Docker Compose is available
-if ! command -v docker-compose &> /dev/null
-then
-    echo "docker-compose is not installed."
-    exit 1
-fi
-
-# Stop MQTT broker
-echo "Stopping MQTT broker..."
-docker-compose down
-
-echo "MQTT broker stopped."
+# Subscribe to messages
+mosquitto_sub -h localhost -p 1883 -t "sensors/#" -t "devices/#"
