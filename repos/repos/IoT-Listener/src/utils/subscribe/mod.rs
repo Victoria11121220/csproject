@@ -133,13 +133,16 @@ fn subscribe_and_restart(
 /// # Arguments
 /// - `graph` - A petgraph DiGraph containing the nodes and edges
 /// - `cancellation_token` - A cancellation token to cancel the subscription
+/// - `db` - A database connection
+/// - `flow_id` - The ID of the flow being processed
 ///
 /// # Returns
 /// A tuple containing the join handles and receivers for the sources
 pub fn subscribe_to_sources(
 	graph: &DiGraph<Node, Edge>,
 	cancellation_token: &CancellationToken,
-	db: Arc<DatabaseConnection>
+	db: Arc<DatabaseConnection>,
+	flow_id: i32
 ) -> SourcesSubscriptionResult {
 	let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<NodeIndex>>();
 	let mut join_handles = Vec::new();
@@ -172,7 +175,8 @@ pub fn subscribe_to_sources(
 			node_store_mapping.clone(),
 			cancellation_token,
 			tx.clone(),
-			db.clone()
+			db.clone(),
+			flow_id
 		)
 	);
 

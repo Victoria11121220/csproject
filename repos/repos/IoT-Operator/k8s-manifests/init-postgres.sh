@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Script to initialize all postgres tables in k8s
+# Script to initialize all tables in postgres on k8s
 
 # Get MQTT host address, use default value if environment variable is not set
 MQTT_HOST=${MQTT_HOST:-host.docker.internal}
@@ -14,7 +14,7 @@ kubectl wait --for=condition=ready pod -l app=postgres --timeout=120s
 # Get PostgreSQL Pod name
 POSTGRES_POD=$(kubectl get pod -l app=postgres -o jsonpath="{.items[0].metadata.name}" -n listener-operator-system)
 
-# Connect to the postgres database in k8s and create tables
+# Connect to postgres database in k8s and create tables
 kubectl exec -it $POSTGRES_POD -n listener-operator-system -- psql -U postgres -d iot_dataflow_manager << EOF
 
 -- Create custom types
@@ -170,14 +170,14 @@ BEGIN
 END;
 \$\$ LANGUAGE plpgsql;
 
--- Create a trigger to send notifications when a new row is inserted into the iot_flow table
+-- Create trigger to send notification when inserting new rows in iot_flow table
 DROP TRIGGER IF EXISTS iot_flow_insert_trigger ON iot_flow;
 CREATE TRIGGER iot_flow_insert_trigger
     AFTER INSERT ON iot_flow
     FOR EACH ROW
     EXECUTE FUNCTION notify_iot_flow_insert();
 
--- Add primary key constraint if it does not exist
+-- Add primary key constraint (if not exists)
 DO \$\$ 
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'iot_flow_name_key') THEN
@@ -193,8 +193,8 @@ VALUES (1, 'Test Site', 'A site for testing purposes',
         '{"zoom": 12, "center": [40.7128, -74.0060]}')
 ON CONFLICT (id) DO NOTHING;
 
--- Insert a row from dotenv-listener/.env as the initial row for the iot_flow table
--- Use environment variables or default values to set the MQTT host address
+-- Insert an initial row as the initial row of the iot_flow table from dotenv-listener/.env
+-- Use environment variables or default values to set MQTT host address
 INSERT INTO iot_flow (id, site_id, name, nodes, edges) 
 VALUES (1, 1, 'Initial Flow', 
         ('[{"id": "mqtt_source_1", "type": "source", "data": {"source": {"type": "MQTT", "config": {"host": "' || '${MQTT_HOST}' || '", "port": 1883}}, "config": {"topic": "sensors/temperature"}}}, {"id":"debug-1","type":"debug","data":{}}]')::jsonb, 

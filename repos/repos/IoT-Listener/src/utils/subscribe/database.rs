@@ -55,6 +55,7 @@ async fn read_latest_readings(
 /// - `cancellation_token` - A cancellation token to cancel the subscription
 /// - `tx` - A channel to send the node indices to
 /// - `db` - A database connection
+/// - `flow_id` - The ID of the flow being processed
 ///
 /// # Returns
 /// A subscription result
@@ -63,18 +64,19 @@ fn poll_and_update_readings(
 	node_store_mapping: HashMap<i32, Vec<ThreadSafeReadingStore>>,
 	cancellation_token: &CancellationToken,
 	tx: UnboundedSender<Vec<NodeIndex>>,
-	db: Arc<DatabaseConnection>
+	db: Arc<DatabaseConnection>,
+	flow_id: i32
 ) -> SubscriptionResult {
 	let cancellation_token = cancellation_token.clone();
 	let sensor_ids: Vec<i32> = node_idx_mapping.keys().cloned().collect();
 	Ok(
 		tokio::spawn(async move {
-			info!("Initialised database polling thread");
+			info!("Initialised database polling thread for flow_id: {}", flow_id);
 			loop {
 				let last_update = chrono::Utc::now();
 				tokio::select! {
                 _ = cancellation_token.cancelled() => {
-                    info!("Cancelling postgres event listener");
+                    info!("Cancelling postgres event listener for flow_id: {}", flow_id);
                     return;
                 }
                 _ = tokio::time::sleep(tokio::time::Duration::from_secs(QUERY_INTERVAL)) => {
@@ -120,12 +122,12 @@ fn poll_and_update_readings(
                                 .collect::<Vec<NodeIndex>>();
                             if !node_idxs.is_empty() {
                                 if let Err(e) = tx.send(node_idxs.clone()) {
-                                    error!("Failed to send node indices: {}", e);
+                                    error!("Failed to send node indices for flow_id {}: {}", flow_id, e);
                                 }
                             }
                         }
                         Err(e) => {
-                            error!("Failed to read latest readings: {}", e);
+                            error!("Failed to read latest readings for flow_id {}: {}", flow_id, e);
                         }
                     }
                 }
@@ -145,6 +147,7 @@ fn poll_and_update_readings(
 /// - `cancellation_token` - A cancellation token to cancel the subscription
 /// - `tx` - A channel to send the node indices to
 /// - `db` - A database connection
+/// - `flow_id` - The ID of the flow being processed
 ///
 /// # Returns
 /// A join handle for the subscription task
@@ -153,7 +156,8 @@ pub fn watch_database(
 	node_store_mapping: HashMap<i32, Vec<ThreadSafeReadingStore>>,
 	cancellation_token: &CancellationToken,
 	tx: UnboundedSender<Vec<NodeIndex>>,
-	db: Arc<DatabaseConnection>
+	db: Arc<DatabaseConnection>,
+	flow_id: i32
 ) -> JoinHandle<()> {
 	let cancellation_token = cancellation_token.clone();
 	let subscription_cancellation_token = cancellation_token.clone();
@@ -162,16 +166,18 @@ pub fn watch_database(
 			let db = db.clone();
 			let node_idx_mapping = node_idx_mapping.clone();
 			let node_store_mapping = node_store_mapping.clone();
+			let flow_id = flow_id;
 			poll_and_update_readings(
 				node_idx_mapping,
 				node_store_mapping,
 				&cancellation_token,
 				tx.clone(),
-				db
+				db,
+				flow_id
 			)
 		},
 		&subscription_cancellation_token,
-		"Database"
+		&format!("Database (flow_id: {})", flow_id)
 	)
 }
 
@@ -242,7 +248,8 @@ mod tests {
 			node_store_mapping,
 			&cancellation_token,
 			tx.clone(),
-			db
+			db,
+			1 // flow_id for testing
 		);
 		cancellation_token.cancel();
 		handle.await.unwrap();

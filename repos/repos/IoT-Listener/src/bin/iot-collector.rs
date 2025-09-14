@@ -51,10 +51,12 @@ async fn main() -> anyhow::Result<()> {
     flow_updates_consumer.subscribe(&[&flow_updates_topic])?;
     info!("Subscribed to flow updates topic '{}'", flow_updates_topic);
 
-    // 5. Shared state for current graph, data receiver, and cancellation token
+    // 5. Shared state for current graph, data receiver, join handles, and cancellation token
+    // Using Option<Arc<...>> for the receiver to allow sharing it between the flow update task and the main loop
     let current_state = Arc::new(Mutex::new((
         None::<(i32, graph::RwLockGraph)>, // (flow_id, graph)
         None::<UnboundedReceiver<Vec<NodeIndex>>>, // data receiver
+        None::<Vec<tokio::task::JoinHandle<()>>>, // join handles for current subscriptions
         None::<CancellationToken>, // cancellation token for current subscriptions
     )));
     
@@ -99,22 +101,30 @@ async fn main() -> anyhow::Result<()> {
                                             graph
                                         };
                                         
+                                        // Create a new cancellation token for this flow
+                                        let flow_cancellation_token = CancellationToken::new();
+                                        
                                         // Subscribe to sources for this graph
-                                                let graph_lock = graph_clone.graph.read().await;
+                                        let graph_lock = graph_clone.graph.read().await;
                                         match rust_listener::subscribe_to_sources(
                                             &graph_lock,
-                                            &cancellation_token_clone,
+                                            &flow_cancellation_token,
                                             db_arc_clone.clone(),
+                                            flow_id,
                                         ) {
                                             Ok((join_handles, receiver)) => {
                                                 drop(graph_lock);
                                                 // Update the current state with new graph, receiver, and cancellation token
                                                 let mut state = current_state_clone.lock().await;
-                                                // Cancel the previous subscriptions if they exist
-                                                if let Some(old_cancellation_token) = &state.2 {
+                                                // Cancel the previous subscriptions if they exist and wait for them to finish
+                                                if let Some((old_join_handles, old_cancellation_token)) = state.2.as_ref().zip(state.3.as_ref()) {
                                                     old_cancellation_token.cancel();
+                                                    // Wait for the previous tasks to complete
+                                                    for handle in old_join_handles.iter() {
+                                                        let _ = handle;
+                                                    }
                                                 }
-                                                *state = (Some((flow_id, graph_clone)), Some(receiver), Some(cancellation_token_clone.clone()));
+                                                *state = (Some((flow_id, graph_clone)), Some(receiver), Some(join_handles), Some(flow_cancellation_token));
                                                 info!("Subscribed to sources for flow_id: {}", flow_id);
                                             }
                                             Err(e) => {
@@ -270,9 +280,10 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
                 Ok(None) => {
-                    // Channel closed, don't put the receiver back
-                    error!("Data receiver channel closed");
-                    break;
+                    // Channel closed, check if it's because of a flow update
+                    info!("Data receiver channel closed, checking for flow update");
+                    // Don't break immediately, continue to next iteration to see if a new receiver is available
+                    continue;
                 }
                 Err(_) => {
                     // Timeout, put the receiver back
